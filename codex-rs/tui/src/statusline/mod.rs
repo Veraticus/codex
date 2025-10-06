@@ -103,7 +103,6 @@ pub(crate) struct StatusLineEnvironmentSnapshot {
     pub hostname: Option<String>,
     pub aws_profile: Option<String>,
     pub kubernetes_context: Option<String>,
-    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -246,7 +245,6 @@ enum RunLabelVariant {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum DegradeOp {
-    DropSession,
     DropDevspace,
     DropKubernetes,
     DropAwsProfile,
@@ -273,7 +271,6 @@ struct EnvironmentInclusion {
     aws_profile: bool,
     kubernetes: bool,
     devspace: bool,
-    session_id: bool,
 }
 
 impl EnvironmentInclusion {
@@ -283,7 +280,6 @@ impl EnvironmentInclusion {
             aws_profile: snapshot.aws_profile.is_some(),
             kubernetes: snapshot.kubernetes_context.is_some(),
             devspace: snapshot.devspace.is_some(),
-            session_id: snapshot.session_id.is_some(),
         }
     }
 }
@@ -335,7 +331,7 @@ impl<'a> RenderModel<'a> {
             snapshot,
             now,
             path_variant: PathVariant::Full,
-            token_variant: TokenVariant::Full,
+            token_variant: TokenVariant::Hidden,
             context_variant: ContextVariant::Bar,
             git_variant: GitVariant::BranchWithStatus,
             include_queue_preview: true,
@@ -391,7 +387,6 @@ impl<'a> RenderModel<'a> {
             DegradeOp::HideContext,
             DegradeOp::SimplifyGit,
             DegradeOp::HideGit,
-            DegradeOp::DropSession,
             DegradeOp::DropDevspace,
             DegradeOp::DropKubernetes,
             DegradeOp::DropAwsProfile,
@@ -411,10 +406,6 @@ impl<'a> RenderModel<'a> {
 
     fn apply_degrade(&mut self, op: DegradeOp) -> bool {
         match op {
-            DegradeOp::DropSession if self.env.session_id => {
-                self.env.session_id = false;
-                true
-            }
             DegradeOp::DropDevspace if self.env.devspace => {
                 self.env.devspace = false;
                 true
@@ -696,14 +687,6 @@ impl<'a> RenderModel<'a> {
             segments.push(PowerlineSegment::text(GREEN, text));
         }
 
-        if self.show_interrupt_hint {
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            spans.push(key_hint::plain(KeyCode::Esc).into());
-            spans.push(" ".into());
-            spans.push("interrupt".dim());
-            segments.push(PowerlineSegment::from_spans(PEACH, spans));
-        }
-
         if self.include_queue_preview && !state.queued_messages.is_empty() {
             let (preview, extra) = queue_preview(&state.queued_messages);
             let mut spans: Vec<Span<'static>> = Vec::new();
@@ -782,12 +765,6 @@ impl<'a> RenderModel<'a> {
             let text = format!("{K8S_ICON}{}", truncate_graphemes(trimmed, 18));
             segments.push(PowerlineSegment::text(TEAL, text));
         }
-        if self.env.session_id
-            && let Some(id) = self.snapshot.environment.session_id.as_ref()
-        {
-            let short = id.graphemes(true).take(8).collect::<String>();
-            segments.push(PowerlineSegment::text(YELLOW, format!("session {short}")));
-        }
         segments
     }
 
@@ -848,14 +825,11 @@ impl<'a> RenderModel<'a> {
         }
 
         let available = width.saturating_sub(CONTEXT_PADDING * 2);
-        let percentage = if context.window > 0 {
-            (context.tokens_in_context as f64 / context.window as f64 * 100.0).clamp(0.0, 100.0)
-        } else {
-            0.0
-        };
+        let percent_remaining = f64::from(context.percent_remaining);
+        let percent_used = (100.0 - percent_remaining).clamp(0.0, 100.0);
 
         let label = format!("{CONTEXT_ICON}Context ");
-        let percent_text = format!(" {percentage:.1}%");
+        let percent_text = format!(" {percent_remaining:.1}% left");
         let label_width = UnicodeWidthStr::width(label.as_str());
         let percent_width = UnicodeWidthStr::width(percent_text.as_str());
         let curves_width = 2usize;
@@ -869,8 +843,8 @@ impl<'a> RenderModel<'a> {
             return Some(vec![span(" ".repeat(width), Style::default())]);
         }
 
-        let filled = ((fill_width as f64) * (percentage / 100.0)).round() as usize;
-        let (accent, light_bg) = context_bar_colors(percentage);
+        let filled = ((fill_width as f64) * (percent_used / 100.0)).round() as usize;
+        let (accent, light_bg) = context_bar_colors(percent_used);
 
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(span(" ".repeat(CONTEXT_PADDING), Style::default()));
@@ -1112,7 +1086,7 @@ mod tests {
             cwd_display: Some("codex".to_string()),
             model: Some(StatusLineModelSnapshot {
                 label: "codex-model".to_string(),
-                detail: Some("reasoning medium".to_string()),
+                detail: Some("high".to_string()),
             }),
             tokens: Some(StatusLineTokenSnapshot {
                 total: TokenCountSnapshot {
@@ -1148,7 +1122,8 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect();
         assert!(rendered.contains("codex-model"));
-        assert!(rendered.contains("Σ"));
+        assert!(rendered.contains("high"));
+        assert!(!rendered.contains('Σ'));
         assert!(rendered.contains("main*"));
         assert!(rendered.contains(" codex") || rendered.contains(" tui"));
         assert!(rendered.contains("vermissian"));
@@ -1179,7 +1154,7 @@ mod tests {
             cwd_fallback: Some("codex".to_string()),
             model: Some(StatusLineModelSnapshot {
                 label: "gpt-5-codex".to_string(),
-                detail: Some("reasoning medium".to_string()),
+                detail: Some("high".to_string()),
             }),
             tokens: Some(StatusLineTokenSnapshot {
                 total: TokenCountSnapshot {
@@ -1226,7 +1201,6 @@ mod tests {
                 hostname: Some("vermissian".to_string()),
                 aws_profile: Some("prod".to_string()),
                 kubernetes_context: Some("codex-dev".to_string()),
-                session_id: Some("session-abcdef12".to_string()),
             },
         }
     }

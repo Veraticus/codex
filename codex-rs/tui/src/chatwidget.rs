@@ -2,9 +2,14 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use std::env;
 use std::fs;
+
+#[cfg(test)]
+use lazy_static::lazy_static;
 
 use codex_core::config::Config;
 use codex_core::config_types::Notifications;
@@ -479,18 +484,6 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
-        if let Some(ref info) = info {
-            let context_window = info
-                .model_context_window
-                .or(self.config.model_context_window);
-            let percent = context_window.map(|window| {
-                info.last_token_usage
-                    .percent_of_context_window_remaining(window)
-            });
-            self.bottom_pane.set_context_window_percent(percent);
-        } else {
-            self.bottom_pane.set_context_window_percent(None);
-        }
         self.token_info = info.clone();
         self.status_line.update_tokens(info);
     }
@@ -2240,7 +2233,6 @@ impl ChatWidget {
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_info = None;
-        self.bottom_pane.set_context_window_percent(None);
         self.status_line.update_tokens(None);
     }
 
@@ -2364,7 +2356,27 @@ fn trim_kube_context(context: &str) -> String {
     context.rsplit('/').next().unwrap_or(context).to_string()
 }
 
+#[cfg(test)]
+lazy_static! {
+    static ref DEVSPACE_OVERRIDE: Mutex<Option<Option<String>>> = Mutex::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_devspace_override_for_tests(value: Option<String>) {
+    *DEVSPACE_OVERRIDE.lock().unwrap() = Some(value);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_devspace_override_for_tests() {
+    *DEVSPACE_OVERRIDE.lock().unwrap() = None;
+}
+
 fn detect_devspace() -> Option<String> {
+    #[cfg(test)]
+    if let Some(override_value) = DEVSPACE_OVERRIDE.lock().unwrap().clone() {
+        return override_value;
+    }
+
     env::var("TMUX_DEVSPACE")
         .ok()
         .filter(|s| !s.trim().is_empty())

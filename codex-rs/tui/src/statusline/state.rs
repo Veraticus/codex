@@ -118,8 +118,7 @@ impl StatusLineState {
     }
 
     pub(crate) fn set_session_id(&mut self, session_id: Option<String>) {
-        self.snapshot.environment.session_id = session_id;
-        self.request_redraw();
+        let _ = session_id;
     }
 
     pub(crate) fn set_queued_messages(&mut self, messages: Vec<String>) {
@@ -264,12 +263,11 @@ impl RunTimer {
 }
 
 fn reasoning_detail(effort: Option<ReasoningEffort>) -> Option<String> {
-    effort.map(|eff| match eff {
-        ReasoningEffort::Minimal => "reasoning minimal".to_string(),
-        ReasoningEffort::Low => "reasoning low".to_string(),
-        ReasoningEffort::Medium => "reasoning medium".to_string(),
-        ReasoningEffort::High => "reasoning high".to_string(),
-    })
+    match effort {
+        Some(ReasoningEffort::High) => Some("high".to_string()),
+        Some(ReasoningEffort::Low) => Some("low".to_string()),
+        _ => None,
+    }
 }
 
 fn token_snapshot_from_info(

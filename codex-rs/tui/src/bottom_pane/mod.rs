@@ -60,8 +60,6 @@ pub(crate) struct BottomPane {
     is_task_running: bool,
     ctrl_c_quit_hint: bool,
     esc_backtrack_hint: bool,
-
-    context_window_percent: Option<u8>,
 }
 
 pub(crate) struct BottomPaneParams {
@@ -92,7 +90,6 @@ impl BottomPane {
             is_task_running: false,
             ctrl_c_quit_hint: false,
             esc_backtrack_hint: false,
-            context_window_percent: None,
         }
     }
 
@@ -278,16 +275,6 @@ impl BottomPane {
     pub fn set_task_running(&mut self, running: bool) {
         self.is_task_running = running;
         self.composer.set_task_running(running);
-        self.request_redraw();
-    }
-
-    pub(crate) fn set_context_window_percent(&mut self, percent: Option<u8>) {
-        if self.context_window_percent == percent {
-            return;
-        }
-
-        self.context_window_percent = percent;
-        self.composer.set_context_window_percent(percent);
         self.request_redraw();
     }
 

@@ -17,7 +17,6 @@ pub(crate) struct FooterProps {
     pub(crate) esc_backtrack_hint: bool,
     pub(crate) use_shift_enter_hint: bool,
     pub(crate) is_task_running: bool,
-    pub(crate) context_window_percent: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,13 +75,7 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         FooterMode::CtrlCReminder => vec![ctrl_c_reminder_line(CtrlCReminderState {
             is_task_running: props.is_task_running,
         })],
-        FooterMode::ShortcutPrompt => {
-            if props.is_task_running {
-                vec![context_window_line(props.context_window_percent)]
-            } else {
-                Vec::new()
-            }
-        }
+        FooterMode::ShortcutPrompt => Vec::new(),
         FooterMode::ShortcutOverlay => shortcut_overlay_lines(ShortcutsState {
             use_shift_enter_hint: props.use_shift_enter_hint,
             esc_backtrack_hint: props.esc_backtrack_hint,
@@ -213,15 +206,6 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
             line.dim()
         })
         .collect()
-}
-
-fn context_window_line(percent: Option<u8>) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    if let Some(percent) = percent {
-        spans.push(format!("{percent}%").dim());
-        spans.push(" context left".dim());
-    }
-    Line::from(spans)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -397,7 +381,6 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
-                context_window_percent: None,
             },
         );
 
@@ -408,7 +391,6 @@ mod tests {
                 esc_backtrack_hint: true,
                 use_shift_enter_hint: true,
                 is_task_running: false,
-                context_window_percent: None,
             },
         );
 
@@ -419,7 +401,6 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
-                context_window_percent: None,
             },
         );
 
@@ -430,7 +411,6 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: true,
-                context_window_percent: None,
             },
         );
 
@@ -441,7 +421,6 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
-                context_window_percent: None,
             },
         );
 
@@ -452,7 +431,6 @@ mod tests {
                 esc_backtrack_hint: true,
                 use_shift_enter_hint: false,
                 is_task_running: false,
-                context_window_percent: None,
             },
         );
 
@@ -463,7 +441,6 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: true,
-                context_window_percent: Some(72),
             },
         );
     }

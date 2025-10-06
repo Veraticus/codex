@@ -1,6 +1,8 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::chatwidget::clear_devspace_override_for_tests;
+use crate::chatwidget::set_devspace_override_for_tests;
 use crate::statusline::StatusLineState;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
@@ -292,7 +294,10 @@ fn make_chatwidget_manual() -> (
         needs_final_message_separator: false,
         last_rendered_width: std::cell::Cell::new(None),
     };
+    // Force a deterministic devspace so status line snapshots stay stable.
+    set_devspace_override_for_tests(Some("earth".to_string()));
     widget.bootstrap_status_line();
+    clear_devspace_override_for_tests();
     (widget, rx, op_rx)
 }
 

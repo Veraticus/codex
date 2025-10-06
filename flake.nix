@@ -44,8 +44,6 @@
             lockFile = ./codex-rs/Cargo.lock;
             outputHashes = {
               "ratatui-0.29.0" = "sha256-HBvT5c8GsiCxMffNjJGLmHnvG77A6cqEL+1ARurBXho=";
-              "rmcp-0.7.0" = "sha256-uAEBai6Uzmpi5fcIn9v4MPE9DbzPvemkaaZ+alwM4PQ=";
-              "rmcp-macros-0.7.0" = "sha256-uAEBai6Uzmpi5fcIn9v4MPE9DbzPvemkaaZ+alwM4PQ=";
             };
           };
           cargoSha256 = "sha256-NP94EW+XS1PrbFfMnGOCnwoNoT1S7txJ8bDD6xRb5hw=";

@@ -327,6 +327,14 @@ impl App {
             AppEvent::OpenReasoningPopup { model, presets } => {
                 self.chat_widget.open_reasoning_popup(model, presets);
             }
+            AppEvent::StatusLineGit(snapshot) => {
+                self.chat_widget.update_statusline_git(snapshot);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::StatusLineKubeContext(context) => {
+                self.chat_widget.update_statusline_kube_context(context);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::PersistModelSelection { model, effort } => {
                 let profile = self.active_profile.as_deref();
                 match persist_model_selection(&self.config.codex_home, profile, &model, effort)
@@ -428,7 +436,7 @@ impl App {
             }
             // Esc primes/advances backtracking only in normal (not working) mode
             // with an empty composer. In any other state, forward Esc so the
-            // active UI (e.g. status indicator, modals, popups) handles it.
+            // active UI (e.g. status line, modals, popups) handles it.
             KeyEvent {
                 code: KeyCode::Esc,
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,

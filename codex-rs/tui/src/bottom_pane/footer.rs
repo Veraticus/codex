@@ -80,10 +80,7 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             if props.is_task_running {
                 vec![context_window_line(props.context_window_percent)]
             } else {
-                vec![Line::from(vec![
-                    key_hint::plain(KeyCode::Char('?')).into(),
-                    " for shortcuts".dim(),
-                ])]
+                Vec::new()
             }
         }
         FooterMode::ShortcutOverlay => shortcut_overlay_lines(ShortcutsState {
@@ -220,15 +217,9 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
 
 fn context_window_line(percent: Option<u8>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    match percent {
-        Some(percent) => {
-            spans.push(format!("{percent}%").dim());
-            spans.push(" context left".dim());
-        }
-        None => {
-            spans.push(key_hint::plain(KeyCode::Char('?')).into());
-            spans.push(" for shortcuts".dim());
-        }
+    if let Some(percent) = percent {
+        spans.push(format!("{percent}%").dim());
+        spans.push(" context left".dim());
     }
     Line::from(spans)
 }

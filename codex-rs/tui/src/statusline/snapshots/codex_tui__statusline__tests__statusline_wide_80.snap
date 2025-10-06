@@ -1,0 +1,28 @@
+---
+source: tui/src/statusline/mod.rs
+expression: snapshot_line_repr(&line)
+---
+00: fg=Rgb(166, 227, 161) "\u{e0b6}"
+01: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) " "
+02: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) "⠋"
+03: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) " "
+04: fg=Rgb(166, 227, 161)|bg=Rgb(180, 190, 254) "\u{e0b0}"
+05: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "
+06: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) "codex"
+07: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "
+08: fg=Rgb(180, 190, 254)|bg=Rgb(137, 220, 235) "\u{e0b0}"
+09: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+10: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) "\u{f16a5}"
+11: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+12: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235)|mod=BOLD "gpt-5-codex"
+13: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+14: fg=Rgb(166, 173, 200)|bg=Rgb(137, 220, 235)|mod=DIM | ITALIC "reasoning medium"
+15: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+16: fg=Rgb(137, 220, 235) "\u{e0b0}"
+17: plain "      "
+18: fg=Rgb(137, 220, 235) "\u{e0b2}"
+19: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+20: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) "\u{e0a0} feature/fix-tests* ↑1"
+21: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+22: fg=Rgb(137, 220, 235) "\u{e0b4}"
+23: plain " "

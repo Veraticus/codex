@@ -10,6 +10,7 @@ use crate::markdown::MarkdownCitationContext;
 use crate::markdown::append_markdown;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
+use crate::statusline::format_elapsed_compact;
 use crate::style::user_message_style;
 use crate::terminal_palette::default_bg;
 use crate::text_formatting::format_and_truncate_tool_result;
@@ -1103,9 +1104,7 @@ impl FinalMessageSeparator {
 }
 impl HistoryCell for FinalMessageSeparator {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let elapsed_seconds = self
-            .elapsed_seconds
-            .map(super::status_indicator_widget::fmt_elapsed_compact);
+        let elapsed_seconds = self.elapsed_seconds.map(format_elapsed_compact);
         if let Some(elapsed_seconds) = elapsed_seconds {
             let worked_for = format!("─ Worked for {elapsed_seconds} ─");
             let worked_for_width = worked_for.width();
@@ -1437,8 +1436,8 @@ mod tests {
                     cmd: "cat shimmer.rs".into(),
                 },
                 ParsedCommand::Read {
-                    name: "status_indicator_widget.rs".into(),
-                    cmd: "cat status_indicator_widget.rs".into(),
+                    name: "statusline/mod.rs".into(),
+                    cmd: "cat statusline/mod.rs".into(),
                 },
             ],
             output: None,
@@ -1514,8 +1513,8 @@ mod tests {
                 "c3".into(),
                 vec!["bash".into(), "-lc".into(), "echo".into()],
                 vec![ParsedCommand::Read {
-                    name: "status_indicator_widget.rs".into(),
-                    cmd: "cat status_indicator_widget.rs".into(),
+                    name: "statusline/mod.rs".into(),
+                    cmd: "cat statusline/mod.rs".into(),
                 }],
             )
             .unwrap();

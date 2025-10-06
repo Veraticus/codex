@@ -1645,33 +1645,10 @@ mod tests {
             row
         };
 
-        let mut hint_row: Option<(u16, String)> = None;
-        for y in 0..area.height {
-            let row = row_to_string(y);
-            if row.contains("? for shortcuts") {
-                hint_row = Some((y, row));
-                break;
-            }
-        }
-
-        let (hint_row_idx, hint_row_contents) =
-            hint_row.expect("expected footer hint row to be rendered");
-        assert_eq!(
-            hint_row_idx,
-            area.height - 1,
-            "hint row should occupy the bottom line: {hint_row_contents:?}",
-        );
-
+        let bottom_row = row_to_string(area.height - 1);
         assert!(
-            hint_row_idx > 0,
-            "expected a spacing row above the footer hints",
-        );
-
-        let spacing_row = row_to_string(hint_row_idx - 1);
-        assert_eq!(
-            spacing_row.trim(),
-            "",
-            "expected blank spacing row above hints but saw: {spacing_row:?}",
+            bottom_row.trim().is_empty(),
+            "expected footer row to be blank when idle but saw: {bottom_row:?}",
         );
     }
 

@@ -72,7 +72,7 @@ pub(crate) struct BottomPaneParams {
 }
 
 impl BottomPane {
-    const BOTTOM_PAD_LINES: u16 = 1;
+    const BOTTOM_PAD_LINES: u16 = 0;
     pub fn new(params: BottomPaneParams) -> Self {
         let enhanced_keys_supported = params.enhanced_keys_supported;
         Self {
@@ -408,9 +408,28 @@ impl WidgetRef for &BottomPane {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use insta::assert_snapshot;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;
+
+    fn snapshot_buffer(buf: &Buffer) -> String {
+        let mut lines = Vec::new();
+        for y in 0..buf.area().height {
+            let mut row = String::new();
+            for x in 0..buf.area().width {
+                row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            lines.push(row);
+        }
+        lines.join("\n")
+    }
+
+    fn render_snapshot(pane: &BottomPane, area: Rect) -> String {
+        let mut buf = Buffer::empty(area);
+        (&pane).render_ref(area, &mut buf);
+        snapshot_buffer(&buf)
+    }
 
     fn exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec {
@@ -470,7 +489,100 @@ mod tests {
         }
         assert!(
             found_composer,
-            "composer placeholder should be visible while task running"
+            "expected composer visible under status line"
+        );
+
+        // Drain the channel to avoid unused warnings.
+        drop(rx);
+    }
+
+    #[test]
+    fn status_indicator_visible_during_command_execution() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+        });
+
+        // Begin a task: show initial status.
+        pane.set_task_running(true);
+
+        // Use a height that allows the status line to be visible above the composer.
+        let area = Rect::new(0, 0, 40, 6);
+        let mut buf = Buffer::empty(area);
+        (&pane).render_ref(area, &mut buf);
+
+        let mut row0 = String::new();
+        for x in 0..area.width {
+            row0.push(buf[(x, 1)].symbol().chars().next().unwrap_or(' '));
+        }
+        assert!(
+            row0.contains("Working"),
+            "expected Working header: {row0:?}"
+        );
+    }
+
+    #[test]
+    fn status_and_composer_fill_height_without_bottom_padding() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+        });
+
+        // Activate spinner (status view replaces composer) with no live ring.
+        pane.set_task_running(true);
+
+        // Use height == desired_height; expect spacer + status + composer rows without trailing padding.
+        let height = pane.desired_height(30);
+        assert!(
+            height >= 3,
+            "expected at least 3 rows to render spacer, status, and composer; got {height}"
+        );
+        let area = Rect::new(0, 0, 30, height);
+        assert_snapshot!(
+            "status_and_composer_fill_height_without_bottom_padding",
+            render_snapshot(&pane, area)
+        );
+    }
+
+    #[test]
+    fn status_hidden_when_height_too_small() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+        });
+
+        pane.set_task_running(true);
+
+        // Height=2 → composer takes the full space; status collapses when there is no room.
+        let area2 = Rect::new(0, 0, 20, 2);
+        assert_snapshot!(
+            "status_hidden_when_height_too_small_height_2",
+            render_snapshot(&pane, area2)
+        );
+
+        // Height=1 → no padding; single row is the composer (status hidden).
+        let area1 = Rect::new(0, 0, 20, 1);
+        assert_snapshot!(
+            "status_hidden_when_height_too_small_height_1",
+            render_snapshot(&pane, area1)
         );
     }
 }

@@ -23,6 +23,7 @@ pub(crate) const ROSEWATER: Color = Color::Rgb(245, 224, 220);
 #[allow(clippy::disallowed_methods)]
 pub(crate) const TEAL: Color = Color::Rgb(148, 226, 213);
 #[allow(clippy::disallowed_methods)]
+#[allow(dead_code)]
 pub(crate) const SURFACE0: Color = Color::Rgb(49, 50, 68);
 #[allow(clippy::disallowed_methods)]
 pub(crate) const SUBTEXT0: Color = Color::Rgb(166, 173, 200);

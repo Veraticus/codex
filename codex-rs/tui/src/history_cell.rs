@@ -105,8 +105,7 @@ impl HistoryCell for UserHistoryCell {
                 .lines()
                 .map(|l| Line::from(l).style(style))
                 .collect::<Vec<_>>(),
-            // Wrap algorithm matches textarea.rs.
-            RtOptions::new(wrap_width as usize).wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+            RtOptions::new(wrap_width as usize),
         );
 
         lines.push(Line::from("").style(style));

@@ -7,11 +7,15 @@ use codex_core::config::Config;
 use codex_core::protocol::TokenUsageInfo;
 use codex_core::protocol_config_types::ReasoningEffort;
 use ratatui::text::Line;
+use unicode_width::UnicodeWidthStr;
 
 use crate::status::format_directory_display;
 use crate::tui::FrameRequester;
 
+use super::DEFAULT_STATUS_MESSAGE;
+use super::MARQUEE_STEP_MS;
 use super::RunTimerSnapshot;
+use super::STATUS_CAPSULE_TEXT_WIDTH;
 use super::StatusLineContextSnapshot;
 use super::StatusLineDevspaceSnapshot;
 use super::StatusLineGitSnapshot;
@@ -48,6 +52,7 @@ impl StatusLineState {
             context_window_hint: config.model_context_window,
         };
         state.set_working_directory(&cwd);
+        state.set_idle_run_state(Instant::now());
         state
     }
 
@@ -133,6 +138,7 @@ impl StatusLineState {
         if let Some(run_state) = self.snapshot.run_state.as_mut() {
             if run_state.label != header {
                 run_state.label = header.to_string();
+                run_state.status_changed_at = Instant::now();
                 self.request_redraw();
             }
         } else {
@@ -140,10 +146,27 @@ impl StatusLineState {
                 label: header.to_string(),
                 show_interrupt_hint: self.esc_hint,
                 queued_messages: self.queued_messages.clone(),
+                status_changed_at: Instant::now(),
                 ..StatusLineRunState::default()
             });
             self.request_redraw();
         }
+    }
+    fn set_idle_run_state(&mut self, now: Instant) {
+        let run_state = StatusLineRunState {
+            label: DEFAULT_STATUS_MESSAGE.to_string(),
+            spinner_started_at: None,
+            timer: Some(RunTimerSnapshot {
+                elapsed_running: Duration::ZERO,
+                last_resume_at: None,
+                is_paused: true,
+            }),
+            queued_messages: self.queued_messages.clone(),
+            show_interrupt_hint: false,
+            status_changed_at: now,
+        };
+        self.snapshot.run_state = Some(run_state);
+        self.request_redraw();
     }
 
     pub(crate) fn start_task(&mut self, header: impl Into<String>) {
@@ -157,16 +180,18 @@ impl StatusLineState {
         run_state.label = header;
         run_state.show_interrupt_hint = self.esc_hint;
         run_state.queued_messages = self.queued_messages.clone();
+        run_state.status_changed_at = now;
         self.snapshot.run_state = Some(run_state);
         self.request_redraw();
     }
 
     pub(crate) fn complete_task(&mut self) {
+        let now = Instant::now();
         if let Some(timer) = self.run_timer.as_mut() {
-            timer.pause(Instant::now());
+            timer.pause(now);
         }
         self.run_timer = None;
-        self.snapshot.run_state = None;
+        self.set_idle_run_state(now);
         self.request_redraw();
     }
 
@@ -192,11 +217,19 @@ impl StatusLineState {
             run_state.queued_messages = self.queued_messages.clone();
             run_state.show_interrupt_hint = self.esc_hint;
         }
-        if let Some(timer) = self.run_timer.as_ref()
-            && !timer.is_paused
-        {
+        let timer_active = self
+            .run_timer
+            .as_ref()
+            .map(|timer| !timer.is_paused)
+            .unwrap_or(false);
+        if timer_active {
             self.frame_requester
                 .schedule_frame_in(Duration::from_millis(48));
+        } else if let Some(run_state) = snapshot.run_state.as_ref()
+            && UnicodeWidthStr::width(run_state.label.as_str()) > STATUS_CAPSULE_TEXT_WIDTH
+        {
+            self.frame_requester
+                .schedule_frame_in(Duration::from_millis(MARQUEE_STEP_MS));
         }
         snapshot
     }

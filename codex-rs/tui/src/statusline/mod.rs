@@ -56,6 +56,13 @@ const PROGRESS_RIGHT_FULL: &str = "";
 const MODEL_ICONS: &[char] = &['󰚩', '󱚝', '󱚟', '󱚡', '󱚣', '󱚥'];
 const DEVSPACE_ICONS: &[&str] = &["󰠖 ", "󰠶 ", "󰋩 ", "󰚌 "];
 const CONTEXT_PADDING: usize = 4;
+const DEFAULT_STATUS_MESSAGE: &str = "Waiting for input";
+pub(super) const STATUS_CAPSULE_WIDTH: usize = 32;
+pub(super) const STATUS_CAPSULE_SPINNER_WIDTH: usize = 1;
+pub(super) const STATUS_CAPSULE_GAP_WIDTH: usize = 1;
+pub(super) const STATUS_CAPSULE_TEXT_WIDTH: usize =
+    STATUS_CAPSULE_WIDTH - STATUS_CAPSULE_SPINNER_WIDTH - STATUS_CAPSULE_GAP_WIDTH;
+pub(super) const MARQUEE_STEP_MS: u64 = 450;
 
 fn span<S>(text: S, style: Style) -> Span<'static>
 where
@@ -114,6 +121,7 @@ pub(crate) struct StatusLineModelSnapshot {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StatusLineTokenSnapshot {
     pub total: TokenCountSnapshot,
+    #[allow(dead_code)]
     pub last: Option<TokenCountSnapshot>,
 }
 
@@ -146,6 +154,7 @@ pub(crate) struct StatusLineContextSnapshot {
 }
 
 impl StatusLineContextSnapshot {
+    #[allow(dead_code)]
     fn percent_used(&self) -> u8 {
         100u8.saturating_sub(self.percent_remaining)
     }
@@ -164,13 +173,27 @@ pub(crate) struct StatusLineDevspaceSnapshot {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct StatusLineRunState {
     pub label: String,
     pub spinner_started_at: Option<Instant>,
     pub timer: Option<RunTimerSnapshot>,
     pub queued_messages: Vec<String>,
     pub show_interrupt_hint: bool,
+    pub status_changed_at: Instant,
+}
+
+impl Default for StatusLineRunState {
+    fn default() -> Self {
+        Self {
+            label: String::new(),
+            spinner_started_at: None,
+            timer: None,
+            queued_messages: Vec::new(),
+            show_interrupt_hint: false,
+            status_changed_at: Instant::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -535,9 +558,7 @@ impl<'a> RenderModel<'a> {
 
     fn collect_left_segments(&self) -> Vec<PowerlineSegment> {
         let mut segments: Vec<PowerlineSegment> = Vec::new();
-        if let Some(state) = self.snapshot.run_state.as_ref() {
-            segments.extend(self.run_state_segments(state));
-        }
+        segments.extend(self.run_state_segments(self.snapshot.run_state.as_ref()));
         if let Some(segment) = self.path_segment() {
             segments.push(segment);
         }
@@ -628,36 +649,48 @@ impl<'a> RenderModel<'a> {
         }
     }
 
-    fn run_state_segments(&self, state: &StatusLineRunState) -> Vec<PowerlineSegment> {
-        let mut segments: Vec<PowerlineSegment> = Vec::new();
-
-        let spinner_text = spinner(state.spinner_started_at).content.to_string();
-        let mut label_parts: Vec<String> = vec![spinner_text];
-        if self.show_run_label {
-            let label = match self.run_label_variant {
-                RunLabelVariant::Full => state.label.clone(),
-                RunLabelVariant::Short => state
-                    .label
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string(),
+    fn run_state_segments(&self, state: Option<&StatusLineRunState>) -> Vec<PowerlineSegment> {
+        let fallback_state;
+        let state = if let Some(state) = state {
+            state
+        } else {
+            fallback_state = StatusLineRunState {
+                label: DEFAULT_STATUS_MESSAGE.to_string(),
+                spinner_started_at: None,
+                timer: Some(RunTimerSnapshot {
+                    elapsed_running: Duration::ZERO,
+                    last_resume_at: None,
+                    is_paused: true,
+                }),
+                queued_messages: Vec::new(),
+                show_interrupt_hint: false,
+                status_changed_at: self.now,
             };
-            if !label.is_empty() {
-                label_parts.push(label);
-            }
-        }
-        let label_text = label_parts.join(" ");
-        if !label_text.is_empty() {
-            segments.push(PowerlineSegment::text(GREEN, label_text));
+            &fallback_state
+        };
+
+        let mut segments: Vec<PowerlineSegment> = Vec::new();
+        let spinner_span = spinner(state.spinner_started_at);
+
+        if self.show_run_label {
+            let label = self.run_label_text(state);
+            segments.push(self.status_capsule_segment(spinner_span, &label, state));
+        } else {
+            let accent = self.status_capsule_accent(state);
+            segments.push(PowerlineSegment::from_spans(accent, vec![spinner_span]));
         }
 
-        if self.show_run_timer
-            && let Some(timer) = state.timer.as_ref()
-        {
-            let elapsed = timer.elapsed_at(self.now).as_secs();
-            let text = format!("󰔟 {}", format_elapsed_compact(elapsed));
-            segments.push(PowerlineSegment::text(GREEN, text));
+        if self.show_run_timer {
+            if let Some(timer) = state.timer.as_ref() {
+                let elapsed = timer.elapsed_at(self.now).as_secs();
+                let text = format!("󰔟 {}", format_elapsed_compact(elapsed));
+                segments.push(PowerlineSegment::text(PEACH, text));
+            } else {
+                segments.push(PowerlineSegment::text(
+                    MAUVE,
+                    format!("󰔟 {}", format_elapsed_compact(0)),
+                ));
+            }
         }
 
         if self.include_queue_preview && !state.queued_messages.is_empty() {
@@ -677,6 +710,61 @@ impl<'a> RenderModel<'a> {
         }
 
         segments
+    }
+    fn run_label_text(&self, state: &StatusLineRunState) -> String {
+        let mut label = match self.run_label_variant {
+            RunLabelVariant::Full => state.label.clone(),
+            RunLabelVariant::Short => state
+                .label
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string(),
+        };
+        if label.trim().is_empty() {
+            DEFAULT_STATUS_MESSAGE.to_string()
+        } else {
+            if label.starts_with(' ') || label.ends_with(' ') {
+                label = label.trim().to_string();
+            }
+            label
+        }
+    }
+
+    fn status_capsule_segment(
+        &self,
+        spinner_span: Span<'static>,
+        label: &str,
+        state: &StatusLineRunState,
+    ) -> PowerlineSegment {
+        debug_assert_eq!(
+            STATUS_CAPSULE_TEXT_WIDTH + STATUS_CAPSULE_SPINNER_WIDTH + STATUS_CAPSULE_GAP_WIDTH,
+            STATUS_CAPSULE_WIDTH
+        );
+        let marquee = marquee_text(label, state, self.now);
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
+        spans.push(spinner_span);
+        match STATUS_CAPSULE_GAP_WIDTH {
+            0 => {}
+            1 => spans.push(" ".into()),
+            gap => spans.push(Span::raw(" ".repeat(gap))),
+        }
+        spans.push(Span::raw(marquee));
+        let accent = self.status_capsule_accent(state);
+        PowerlineSegment::from_spans(accent, spans)
+    }
+
+    fn status_capsule_accent(&self, state: &StatusLineRunState) -> Color {
+        if state
+            .timer
+            .as_ref()
+            .map(|timer| !timer.is_paused)
+            .unwrap_or(false)
+        {
+            GREEN
+        } else {
+            MAUVE
+        }
     }
 
     fn render_right_segments(&self) -> Option<Vec<Span<'static>>> {
@@ -889,6 +977,95 @@ fn truncate_graphemes(text: &str, max_graphemes: usize) -> String {
     truncated
 }
 
+fn marquee_text(label: &str, state: &StatusLineRunState, now: Instant) -> String {
+    if STATUS_CAPSULE_TEXT_WIDTH == 0 {
+        return String::new();
+    }
+    let label_width = UnicodeWidthStr::width(label);
+    let offset = if label_width > STATUS_CAPSULE_TEXT_WIDTH {
+        let elapsed = now.saturating_duration_since(state.status_changed_at);
+        let max_offset = label_width - STATUS_CAPSULE_TEXT_WIDTH;
+        marquee_offset(elapsed, max_offset)
+    } else {
+        0
+    };
+    slice_text_segment(label, offset, STATUS_CAPSULE_TEXT_WIDTH)
+}
+
+fn marquee_offset(elapsed: Duration, max_offset: usize) -> usize {
+    if max_offset == 0 {
+        return 0;
+    }
+    let step_millis = elapsed.as_millis() / u128::from(MARQUEE_STEP_MS);
+    let step = usize::try_from(step_millis).unwrap_or(usize::MAX);
+    let span = max_offset.saturating_mul(2);
+    if span == 0 {
+        return 0;
+    }
+    let position = step % span;
+    if position < max_offset {
+        position
+    } else {
+        span - position
+    }
+}
+
+fn slice_text_segment(text: &str, start_cols: usize, width_cols: usize) -> String {
+    if width_cols == 0 {
+        return String::new();
+    }
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    if graphemes.is_empty() {
+        return " ".repeat(width_cols);
+    }
+    let widths: Vec<usize> = graphemes
+        .iter()
+        .map(|g| UnicodeWidthStr::width(*g))
+        .collect();
+
+    let mut consumed = 0;
+    let mut start_index = 0;
+    while start_index < widths.len() && consumed + widths[start_index] <= start_cols {
+        consumed += widths[start_index];
+        start_index += 1;
+    }
+    if start_index >= widths.len() {
+        return " ".repeat(width_cols);
+    }
+    if consumed < start_cols {
+        start_index += 1;
+        if start_index >= widths.len() {
+            return " ".repeat(width_cols);
+        }
+    }
+
+    let mut result = String::new();
+    let mut used = 0;
+    for idx in start_index..graphemes.len() {
+        let g = graphemes[idx];
+        let g_width = widths[idx];
+        if g_width > width_cols && used == 0 {
+            return " ".repeat(width_cols);
+        }
+        if used + g_width > width_cols {
+            break;
+        }
+        result.push_str(g);
+        used += g_width;
+        if used == width_cols {
+            break;
+        }
+    }
+    if used < width_cols {
+        result.push_str(&" ".repeat(width_cols - used));
+    }
+    if result.is_empty() {
+        " ".repeat(width_cols)
+    } else {
+        result
+    }
+}
+
 fn queue_preview(commands: &[String]) -> (String, usize) {
     if commands.is_empty() {
         return (String::new(), 0);
@@ -981,28 +1158,32 @@ fn format_token_count(value: u64) -> String {
 }
 
 fn select_model_icon(model: &str) -> char {
-    if MODEL_ICONS.is_empty() {
-        return '󰚩';
+    match MODEL_ICONS {
+        [] => '󰚩',
+        icons => {
+            if model.is_empty() {
+                return icons[0];
+            }
+            let mut hash: u64 = 0;
+            for byte in model.as_bytes() {
+                hash = hash.wrapping_mul(131).wrapping_add(*byte as u64);
+            }
+            icons[(hash as usize) % icons.len()]
+        }
     }
-    if model.is_empty() {
-        return MODEL_ICONS[0];
-    }
-    let mut hash: u64 = 0;
-    for byte in model.as_bytes() {
-        hash = hash.wrapping_mul(131).wrapping_add(*byte as u64);
-    }
-    MODEL_ICONS[(hash as usize) % MODEL_ICONS.len()]
 }
 
 fn devspace_icon(name: &str) -> &'static str {
-    if DEVSPACE_ICONS.is_empty() {
-        return "󰠖 ";
+    match DEVSPACE_ICONS {
+        [] => "󰠖 ",
+        icons => {
+            let mut hash: u64 = 0;
+            for byte in name.as_bytes() {
+                hash = hash.wrapping_mul(167).wrapping_add(*byte as u64);
+            }
+            icons[(hash as usize) % icons.len()]
+        }
     }
-    let mut hash: u64 = 0;
-    for byte in name.as_bytes() {
-        hash = hash.wrapping_mul(167).wrapping_add(*byte as u64);
-    }
-    DEVSPACE_ICONS[(hash as usize) % DEVSPACE_ICONS.len()]
 }
 
 fn context_bar_colors(percent_used: f64) -> (Color, Color) {
@@ -1120,6 +1301,33 @@ mod tests {
         assert_snapshot!("statusline_narrow_40", snapshot_line_repr(&line));
     }
 
+    #[test]
+    fn run_label_defaults_to_waiting_message() {
+        let now = Instant::now();
+        let snapshot = StatusLineSnapshot {
+            context: Some(StatusLineContextSnapshot {
+                percent_remaining: 100,
+                tokens_in_context: 0,
+                window: 1,
+            }),
+            run_state: Some(StatusLineRunState {
+                status_changed_at: now,
+                ..StatusLineRunState::default()
+            }),
+            ..StatusLineSnapshot::default()
+        };
+        let renderer = StatusLineRenderer;
+        let line = renderer.render(&snapshot, 120, now);
+        let has_default = line
+            .spans
+            .iter()
+            .any(|span| span.content.contains(DEFAULT_STATUS_MESSAGE));
+        assert!(
+            has_default,
+            "status capsule should show default message when label empty"
+        );
+    }
+
     fn sample_snapshot() -> StatusLineSnapshot {
         StatusLineSnapshot {
             cwd_display: Some("~/workspace/codex".to_string()),
@@ -1160,6 +1368,7 @@ mod tests {
                 }),
                 queued_messages: vec!["git status".to_string(), "cargo test --all".to_string()],
                 show_interrupt_hint: true,
+                status_changed_at: Instant::now(),
             }),
             git: Some(StatusLineGitSnapshot {
                 branch: Some("feature/fix-tests".to_string()),

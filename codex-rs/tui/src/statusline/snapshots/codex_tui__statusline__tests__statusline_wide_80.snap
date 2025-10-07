@@ -1,13 +1,13 @@
 ---
 source: tui/src/statusline/mod.rs
-assertion_line: 1110
+assertion_line: 1292
 expression: snapshot_line_repr(&line)
 ---
-00: fg=Rgb(166, 227, 161) "\u{e0b6}"
-01: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) " "
-02: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) "◦"
-03: fg=Rgb(30, 30, 46)|bg=Rgb(166, 227, 161) " "
-04: fg=Rgb(166, 227, 161)|bg=Rgb(180, 190, 254) "\u{e0b0}"
+00: fg=Rgb(203, 166, 247) "\u{e0b6}"
+01: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247) " "
+02: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247)|mod=DIM "◦"
+03: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247) " "
+04: fg=Rgb(203, 166, 247)|bg=Rgb(180, 190, 254) "\u{e0b0}"
 05: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "
 06: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) "codex"
 07: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "

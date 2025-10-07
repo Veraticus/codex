@@ -1,8 +1,8 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 1470
+assertion_line: 1479
 expression: terminal.backend()
 ---
 "                                        "
-"                                        "
 "› Ask Codex to do anything              "
+" ◦  tui  󱚥 gpt-5-codex              "

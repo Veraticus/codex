@@ -492,22 +492,7 @@ impl<'a> RenderModel<'a> {
         let right_line = Line::from(right_spans.clone());
         let left_width = line_display_width(&left_line);
         let right_width = line_display_width(&right_line);
-        let has_left = left_width > 0;
-        let has_right = right_width > 0;
-
-        let mut separators = 0usize;
-        if has_left && (self.should_render_middle() || has_right) {
-            separators += 1;
-        }
-        if has_right && self.should_render_middle() {
-            separators += 1;
-        }
-        if separators > target_width {
-            return None;
-        }
-
-        let available_for_middle =
-            target_width.checked_sub(left_width + right_width + separators)?;
+        let available_for_middle = target_width.checked_sub(left_width + right_width)?;
         let (middle_spans, _middle_width) = self.render_middle(available_for_middle)?;
 
         let mut spans: Vec<Span<'static>> = Vec::new();
@@ -515,24 +500,12 @@ impl<'a> RenderModel<'a> {
         spans.extend(middle_spans);
         spans.extend(right_spans);
 
-        let mut line = Line::from(spans);
-        let current_width = line_display_width(&line);
-        if current_width < target_width {
-            line.spans
-                .push(" ".repeat(target_width - current_width).into());
-        }
-
+        let line = Line::from(spans);
+        debug_assert!(line_display_width(&line) <= target_width);
         if line_display_width(&line) == target_width {
             Some(line)
         } else {
             None
-        }
-    }
-
-    fn should_render_middle(&self) -> bool {
-        match self.context_variant {
-            ContextVariant::Hidden => false,
-            _ => self.snapshot.context.is_some(),
         }
     }
 

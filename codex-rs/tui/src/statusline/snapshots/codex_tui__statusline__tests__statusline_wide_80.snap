@@ -1,5 +1,6 @@
 ---
 source: tui/src/statusline/mod.rs
+assertion_line: 1110
 expression: snapshot_line_repr(&line)
 ---
 00: fg=Rgb(166, 227, 161) "\u{e0b6}"
@@ -19,7 +20,7 @@ expression: snapshot_line_repr(&line)
 14: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235)|mod=ITALIC "high"
 15: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
 16: fg=Rgb(137, 220, 235) "\u{e0b0}"
-17: plain "   "
+17: plain "    "
 18: fg=Rgb(245, 224, 220) "\u{e0b2}"
 19: fg=Rgb(30, 30, 46)|bg=Rgb(245, 224, 220) " "
 20: fg=Rgb(30, 30, 46)|bg=Rgb(245, 224, 220) "\u{f233} vermissian"
@@ -29,4 +30,3 @@ expression: snapshot_line_repr(&line)
 24: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) "\u{e0a0} feature/fix-tests* ↑1"
 25: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
 26: fg=Rgb(137, 220, 235) "\u{e0b4}"
-27: plain " "

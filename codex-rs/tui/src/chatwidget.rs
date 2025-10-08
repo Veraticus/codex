@@ -1116,6 +1116,19 @@ impl ChatWidget {
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event {
             KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                if self.bottom_pane.is_task_running() {
+                    self.bottom_pane.show_ctrl_c_quit_hint();
+                    self.submit_op(Op::Interrupt);
+                } else {
+                    self.bottom_pane.clear_ctrl_c_quit_hint();
+                }
+            }
+            KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: crossterm::event::KeyModifiers::CONTROL,
                 kind: KeyEventKind::Press,
@@ -1703,7 +1716,8 @@ impl ChatWidget {
     pub(crate) fn add_status_output(&mut self) {
         let default_usage = TokenUsage::default();
         let (total_usage, context_usage) = if let Some(ti) = &self.token_info {
-            (&ti.total_token_usage, Some(&ti.last_token_usage))
+            let usage = &ti.total_token_usage;
+            (usage, Some(usage))
         } else {
             (&default_usage, Some(&default_usage))
         };

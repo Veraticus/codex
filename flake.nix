@@ -28,6 +28,13 @@
           rev = "9b2ad1298408c45918ee9f8241a6f95498cdbed2";
           hash = "sha256-HBvT5c8GsiCxMffNjJGLmHnvG77A6cqEL+1ARurBXho=";
         };
+        cargoLock = {
+          lockFile = ./codex-rs/Cargo.lock;
+          outputHashes = {
+            "ratatui-0.29.0" = "sha256-HBvT5c8GsiCxMffNjJGLmHnvG77A6cqEL+1ARurBXho=";
+          };
+        };
+        cargoVendorSha = "sha256-NP94EW+XS1PrbFfMnGOCnwoNoT1S7txJ8bDD6xRb5hw=";
         cargoPatchConfig = pkgs.writeText "cargo-config.toml" ''
           [patch."https://github.com/modelcontextprotocol/rust-sdk"]
           rmcp = { path = "${rmcpSrc}/crates/rmcp" }
@@ -36,18 +43,11 @@
           [patch.crates-io]
           ratatui = { path = "${ratatuiSrc}" }
         '';
-        codex-tui = rustPlatform.buildRustPackage {
-          pname = "codex-tui";
+        commonRustPackageArgs = {
           version = "unstable";
           src = ./codex-rs;
-          cargoLock = {
-            lockFile = ./codex-rs/Cargo.lock;
-            outputHashes = {
-              "ratatui-0.29.0" = "sha256-HBvT5c8GsiCxMffNjJGLmHnvG77A6cqEL+1ARurBXho=";
-            };
-          };
-          cargoSha256 = "sha256-NP94EW+XS1PrbFfMnGOCnwoNoT1S7txJ8bDD6xRb5hw=";
-          cargoBuildFlags = [ "--package" "codex-tui" "--bin" "codex-tui" ];
+          inherit cargoLock;
+          cargoSha256 = cargoVendorSha;
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs;
             [ openssl libgit2 curl zlib ]
@@ -58,6 +58,10 @@
             cp ${cargoPatchConfig} "$CARGO_HOME/config.toml"
           '';
           doCheck = false;
+        };
+        codex-tui = rustPlatform.buildRustPackage (commonRustPackageArgs // {
+          pname = "codex-tui";
+          cargoBuildFlags = [ "--package" "codex-tui" "--bin" "codex-tui" ];
           meta = with pkgs.lib; {
             description = "Codex TUI built from codex-rs";
             homepage = "https://github.com/sourcegraph/codex";
@@ -65,18 +69,33 @@
             mainProgram = "codex-tui";
             platforms = platforms.unix;
           };
-        };
+        });
+        codex-cli = rustPlatform.buildRustPackage (commonRustPackageArgs // {
+          pname = "codex-cli";
+          cargoBuildFlags = [ "--package" "codex-cli" "--bin" "codex" ];
+          meta = with pkgs.lib; {
+            description = "Codex CLI built from codex-rs";
+            homepage = "https://github.com/sourcegraph/codex";
+            license = licenses.asl20;
+            mainProgram = "codex";
+            platforms = platforms.unix;
+          };
+        });
       in {
         packages = {
+          codex-cli = codex-cli;
           codex-tui = codex-tui;
-          default = codex-tui;
+          default = codex-cli;
         };
         apps =
           let
+            codexCliApp = flake-utils.lib.mkApp { drv = codex-cli; };
             codexApp = flake-utils.lib.mkApp { drv = codex-tui; };
           in {
+            codex = codexCliApp;
+            codex-cli = codexCliApp;
             codex-tui = codexApp;
-            default = codexApp;
+            default = codexCliApp;
           };
       }
     );

@@ -655,6 +655,21 @@ fn streaming_final_answer_keeps_task_running_state() {
 }
 
 #[test]
+fn escape_interrupts_running_task() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual();
+
+    chat.on_task_started();
+    assert!(chat.bottom_pane.is_task_running());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    match op_rx.try_recv() {
+        Ok(Op::Interrupt) => {}
+        other => panic!("expected Op::Interrupt, got {other:?}"),
+    }
+}
+
+#[test]
 fn exec_history_cell_shows_working_then_completed() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
 

@@ -13,8 +13,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::exec_command::relativize_to_home;
-use crate::render::renderable::ColumnRenderable;
-use crate::render::renderable::Renderable;
+use crate::render::renderable::{ColumnRenderable, InsetRenderable, Renderable};
 use codex_core::git_info::get_git_repo_root;
 use codex_core::protocol::FileChange;
 
@@ -65,7 +64,10 @@ impl From<DiffSummary> for Box<dyn Renderable> {
             path.extend(render_line_count_summary(row.added, row.removed));
             rows.push(Box::new(path));
             rows.push(Box::new(RtLine::from("")));
-            rows.push(Box::new(row.change));
+            rows.push(Box::new(InsetRenderable::new(
+                row.change,
+                Insets::tlbr(0, 2, 0, 0),
+            )));
         }
 
         Box::new(ColumnRenderable::new(rows))

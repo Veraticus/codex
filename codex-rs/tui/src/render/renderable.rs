@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::render::Insets;
+use crate::render::RectExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;

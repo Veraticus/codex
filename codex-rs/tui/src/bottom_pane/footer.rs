@@ -11,6 +11,8 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
+const FOOTER_VISIBLE: bool = false;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FooterProps {
     pub(crate) mode: FooterMode,
@@ -59,10 +61,17 @@ pub(crate) fn reset_mode_after_activity(current: FooterMode) -> FooterMode {
 }
 
 pub(crate) fn footer_height(props: FooterProps) -> u16 {
-    footer_lines(props).len() as u16
+    if FOOTER_VISIBLE {
+        footer_lines(props).len() as u16
+    } else {
+        0
+    }
 }
 
 pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps) {
+    if !FOOTER_VISIBLE {
+        return;
+    }
     Paragraph::new(prefix_lines(
         footer_lines(props),
         " ".repeat(FOOTER_INDENT_COLS).into(),
@@ -110,16 +119,21 @@ struct ShortcutsState {
 }
 
 fn ctrl_c_reminder_line(state: CtrlCReminderState) -> Line<'static> {
-    let action = if state.is_task_running {
-        "interrupt"
+    if state.is_task_running {
+        Line::from(vec![
+            key_hint::plain(KeyCode::Esc).into(),
+            " or ".into(),
+            key_hint::ctrl(KeyCode::Char('c')).into(),
+            " to interrupt".into(),
+        ])
+        .dim()
     } else {
-        "quit"
-    };
-    Line::from(vec![
-        key_hint::ctrl(KeyCode::Char('c')).into(),
-        format!(" again to {action}").into(),
-    ])
-    .dim()
+        Line::from(vec![
+            key_hint::ctrl(KeyCode::Char('c')).into(),
+            " again to quit".into(),
+        ])
+        .dim()
+    }
 }
 
 fn esc_hint_line(esc_backtrack_hint: bool) -> Line<'static> {

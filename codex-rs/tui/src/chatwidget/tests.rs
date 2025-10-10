@@ -1,9 +1,6 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use crate::chatwidget::clear_devspace_override_for_tests;
-use crate::chatwidget::set_devspace_override_for_tests;
-use crate::statusline::StatusLineState;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
 use assert_matches::assert_matches;
@@ -252,23 +249,19 @@ fn make_chatwidget_manual() -> (
     let app_event_tx = AppEventSender::new(tx_raw);
     let (op_tx, op_rx) = unbounded_channel::<Op>();
     let cfg = test_config();
-    let frame_requester = FrameRequester::test_dummy();
     let bottom = BottomPane::new(BottomPaneParams {
         app_event_tx: app_event_tx.clone(),
-        frame_requester: frame_requester.clone(),
+        frame_requester: FrameRequester::test_dummy(),
         has_input_focus: true,
         enhanced_keys_supported: false,
         placeholder_text: "Ask Codex to do anything".to_string(),
         disable_paste_burst: false,
     });
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
-    let status_line = StatusLineState::new(&cfg, frame_requester.clone());
-    let mut widget = ChatWidget {
+    let widget = ChatWidget {
         app_event_tx,
-        frame_requester,
         codex_op_tx: op_tx,
         bottom_pane: bottom,
-        status_line,
         active_cell: None,
         config: cfg.clone(),
         auth_manager,
@@ -283,21 +276,20 @@ fn make_chatwidget_manual() -> (
         interrupts: InterruptManager::new(),
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
+        current_status_header: String::from("Working"),
+        retry_status_header: None,
         conversation_id: None,
+        frame_requester: FrameRequester::test_dummy(),
         show_welcome_banner: true,
         queued_user_messages: VecDeque::new(),
         suppress_session_configured_redraw: false,
         pending_notification: None,
         is_review_mode: false,
         ghost_snapshots: Vec::new(),
-        ghost_snapshots_disabled: true,
+        ghost_snapshots_disabled: false,
         needs_final_message_separator: false,
         last_rendered_width: std::cell::Cell::new(None),
     };
-    // Force a deterministic devspace so status line snapshots stay stable.
-    set_devspace_override_for_tests(Some("earth".to_string()));
-    widget.bootstrap_status_line();
-    clear_devspace_override_for_tests();
     (widget, rx, op_rx)
 }
 
@@ -663,6 +655,7 @@ fn streaming_final_answer_keeps_task_running_state() {
     chat.on_commit_tick();
 
     assert!(chat.bottom_pane.is_task_running());
+    assert!(chat.bottom_pane.status_widget().is_none());
 
     chat.bottom_pane
         .set_composer_text("queued submission".to_string());
@@ -684,17 +677,14 @@ fn streaming_final_answer_keeps_task_running_state() {
 }
 
 #[test]
-fn escape_interrupts_running_task() {
+fn ctrl_c_shutdown_ignores_caps_lock() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual();
 
-    chat.on_task_started();
-    assert!(chat.bottom_pane.is_task_running());
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL));
 
     match op_rx.try_recv() {
-        Ok(Op::Interrupt) => {}
-        other => panic!("expected Op::Interrupt, got {other:?}"),
+        Ok(Op::Shutdown) => {}
+        other => panic!("expected Op::Shutdown, got {other:?}"),
     }
 }
 
@@ -1554,6 +1544,82 @@ fn ui_snapshots_small_heights_task_running() {
     }
 }
 
+// Snapshot test: status widget + approval modal active together
+// The modal takes precedence visually; this captures the layout with a running
+// task (status indicator active) while an approval request is shown.
+#[test]
+fn status_widget_and_approval_modal_snapshot() {
+    use codex_core::protocol::ExecApprovalRequestEvent;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    // Begin a running task so the status indicator would be active.
+    chat.handle_codex_event(Event {
+        id: "task-1".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+    // Provide a deterministic header for the status line.
+    chat.handle_codex_event(Event {
+        id: "task-1".into(),
+        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
+            delta: "**Analyzing**".into(),
+        }),
+    });
+
+    // Now show an approval modal (e.g. exec approval).
+    let ev = ExecApprovalRequestEvent {
+        call_id: "call-approve-exec".into(),
+        command: vec!["echo".into(), "hello world".into()],
+        cwd: std::path::PathBuf::from("/tmp"),
+        reason: Some(
+            "this is a test reason such as one that would be produced by the model".into(),
+        ),
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-approve-exec".into(),
+        msg: EventMsg::ExecApprovalRequest(ev),
+    });
+
+    // Render at the widget's desired height and snapshot.
+    let height = chat.desired_height(80);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, height))
+        .expect("create terminal");
+    terminal
+        .draw(|f| f.render_widget_ref(&chat, f.area()))
+        .expect("draw status + approval modal");
+    assert_snapshot!("status_widget_and_approval_modal", terminal.backend());
+}
+
+// Snapshot test: status widget active (StatusIndicatorView)
+// Ensures the VT100 rendering of the status indicator is stable when active.
+#[test]
+fn status_widget_active_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    // Activate the status indicator by simulating a task start.
+    chat.handle_codex_event(Event {
+        id: "task-1".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+    // Provide a deterministic header via a bold reasoning chunk.
+    chat.handle_codex_event(Event {
+        id: "task-1".into(),
+        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
+            delta: "**Analyzing**".into(),
+        }),
+    });
+    // Render and snapshot.
+    let height = chat.desired_height(80);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, height))
+        .expect("create terminal");
+    terminal
+        .draw(|f| f.render_widget_ref(&chat, f.area()))
+        .expect("draw status widget");
+    assert_snapshot!("status_widget_active", terminal.backend());
+}
+
 #[test]
 fn apply_patch_events_emit_history_cells() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
@@ -1992,9 +2058,10 @@ fn plan_update_renders_history_cell() {
 }
 
 #[test]
-fn stream_error_is_rendered_to_history() {
+fn stream_error_updates_status_indicator() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
-    let msg = "stream error: stream disconnected before completion: idle timeout waiting for SSE; retrying 1/5 in 211ms…";
+    chat.bottom_pane.set_task_running(true);
+    let msg = "Re-connecting... 2/5";
     chat.handle_codex_event(Event {
         id: "sub-1".into(),
         msg: EventMsg::StreamError(StreamErrorEvent {
@@ -2003,11 +2070,15 @@ fn stream_error_is_rendered_to_history() {
     });
 
     let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "expected a history cell for StreamError");
-    let blob = lines_to_single_string(cells.last().unwrap());
-    assert!(blob.contains('⚠'));
-    assert!(blob.contains("stream error:"));
-    assert!(blob.contains("idle timeout waiting for SSE"));
+    assert!(
+        cells.is_empty(),
+        "expected no history cell for StreamError event"
+    );
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should be visible");
+    assert_eq!(status.header(), msg);
 }
 
 #[test]

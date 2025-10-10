@@ -2,18 +2,9 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::Mutex;
-
-use std::env;
-use std::fs;
-
-#[cfg(test)]
-use lazy_static::lazy_static;
 
 use codex_core::config::Config;
 use codex_core::config_types::Notifications;
-use codex_core::git_info::collect_git_info;
 use codex_core::git_info::current_branch_name;
 use codex_core::git_info::local_git_branches;
 use codex_core::protocol::AgentMessageDeltaEvent;
@@ -34,7 +25,6 @@ use codex_core::protocol::ExitedReviewModeEvent;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::InputMessageKind;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
-use codex_core::protocol::McpInvocation;
 use codex_core::protocol::McpListToolsResponseEvent;
 use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
@@ -63,12 +53,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
-use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
-use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::spawn_blocking;
 use tracing::debug;
 
 use crate::app_event::AppEvent;
@@ -96,8 +83,6 @@ use crate::history_cell::McpToolCallCell;
 use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
-use crate::statusline::StatusLineGitSnapshot;
-use crate::statusline::StatusLineState;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod interrupts;
@@ -127,9 +112,7 @@ use codex_git_tooling::GitToolingError;
 use codex_git_tooling::create_ghost_commit;
 use codex_git_tooling::restore_ghost_commit;
 use codex_protocol::plan_tool::UpdatePlanArgs;
-use hostname::get as get_hostname;
 use strum::IntoEnumIterator;
-use tokio::runtime::Handle;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
 
@@ -239,7 +222,6 @@ pub(crate) struct ChatWidget {
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
     bottom_pane: BottomPane,
-    status_line: StatusLineState,
     active_cell: Option<Box<dyn HistoryCell>>,
     config: Config,
     auth_manager: Arc<AuthManager>,
@@ -258,6 +240,10 @@ pub(crate) struct ChatWidget {
     reasoning_buffer: String,
     // Accumulates full reasoning content for transcript-only recording
     full_reasoning_buffer: String,
+    // Current status header shown in the status indicator.
+    current_status_header: String,
+    // Previous status header to restore after a transient stream retry.
+    retry_status_header: Option<String>,
     conversation_id: Option<ConversationId>,
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
@@ -321,58 +307,12 @@ impl ChatWidget {
         }
     }
 
-    fn bootstrap_status_line(&mut self) {
-        self.sync_status_line_model();
-        let initial_tokens = self.token_info.clone();
-        self.status_line.update_tokens(initial_tokens);
-        self.status_line.set_devspace(detect_devspace());
-        self.status_line.set_hostname(detect_hostname());
-        self.status_line.set_aws_profile(detect_aws_profile());
-        self.refresh_queued_user_messages();
-        self.spawn_status_line_background_tasks();
-    }
-
-    fn sync_status_line_model(&mut self) {
-        self.status_line.update_model(
-            self.config.model.clone(),
-            self.config.model_reasoning_effort,
-        );
-    }
-
-    fn spawn_status_line_background_tasks(&self) {
-        self.spawn_git_refresh();
-        self.spawn_kube_refresh();
-    }
-
-    fn spawn_git_refresh(&self) {
-        let Ok(handle) = Handle::try_current() else {
+    fn set_status_header(&mut self, header: String) {
+        if self.current_status_header == header {
             return;
-        };
-        let cwd = self.config.cwd.clone();
-        let tx = self.app_event_tx.clone();
-        handle.spawn(async move {
-            let snapshot = collect_status_line_git_snapshot(cwd).await;
-            tx.send(AppEvent::StatusLineGit(snapshot));
-        });
-    }
-
-    fn spawn_kube_refresh(&self) {
-        let Ok(handle) = Handle::try_current() else {
-            return;
-        };
-        let tx = self.app_event_tx.clone();
-        handle.spawn(async move {
-            let context = detect_kube_context_async().await;
-            tx.send(AppEvent::StatusLineKubeContext(context));
-        });
-    }
-
-    pub(crate) fn update_statusline_git(&mut self, git: Option<StatusLineGitSnapshot>) {
-        self.status_line.set_git_info(git);
-    }
-
-    pub(crate) fn update_statusline_kube_context(&mut self, context: Option<String>) {
-        self.status_line.set_kubernetes_context(context);
+        }
+        self.current_status_header = header.clone();
+        self.bottom_pane.update_status_header(header);
     }
 
     // --- Small event handlers ---
@@ -380,13 +320,9 @@ impl ChatWidget {
         self.bottom_pane
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.conversation_id = Some(event.session_id);
-        self.status_line
-            .set_session_id(Some(event.session_id.to_string()));
         let initial_messages = event.initial_messages.clone();
         let model_for_header = event.model.clone();
         self.session_header.set_model(&model_for_header);
-        self.sync_status_line_model();
-        self.spawn_status_line_background_tasks();
         self.add_to_history(history_cell::new_session_info(
             &self.config,
             event,
@@ -427,7 +363,10 @@ impl ChatWidget {
         self.reasoning_buffer.push_str(&delta);
 
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
-            self.status_line.update_run_header(&header);
+            // Update the shimmer header to the extracted reasoning chunk header.
+            self.set_status_header(header);
+        } else {
+            // Fallback while we don't yet have a bold header: leave existing header as-is.
         }
         self.request_redraw();
     }
@@ -459,7 +398,8 @@ impl ChatWidget {
     fn on_task_started(&mut self) {
         self.bottom_pane.clear_ctrl_c_quit_hint();
         self.bottom_pane.set_task_running(true);
-        self.status_line.start_task("Working");
+        self.retry_status_header = None;
+        self.set_status_header(String::from("Working"));
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -471,8 +411,6 @@ impl ChatWidget {
         // Mark task stopped and request redraw now that all content is in history.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
-        self.status_line.complete_task();
-        self.spawn_git_refresh();
         self.request_redraw();
 
         // If there is a queued user message, send exactly one now to begin the next turn.
@@ -484,8 +422,17 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
-        self.token_info = info.clone();
-        self.status_line.update_tokens(info);
+        if let Some(info) = info {
+            let context_window = info
+                .model_context_window
+                .or(self.config.model_context_window);
+            let percent = context_window.map(|window| {
+                info.last_token_usage
+                    .percent_of_context_window_remaining(window)
+            });
+            self.bottom_pane.set_context_window_percent(percent);
+            self.token_info = Some(info);
+        }
     }
 
     fn on_rate_limit_snapshot(&mut self, snapshot: Option<RateLimitSnapshot>) {
@@ -527,8 +474,6 @@ impl ChatWidget {
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
         self.stream_controller = None;
-        self.status_line.complete_task();
-        self.spawn_git_refresh();
     }
 
     fn on_error(&mut self, message: String) {
@@ -570,7 +515,7 @@ impl ChatWidget {
                 format!("{queued_text}\n{existing_text}")
             };
             self.bottom_pane.set_composer_text(combined);
-            // Clear the queue and update the status line queue preview.
+            // Clear the queue and update the status indicator list.
             self.queued_user_messages.clear();
             self.refresh_queued_user_messages();
         }
@@ -614,8 +559,6 @@ impl ChatWidget {
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
-        self.status_line.resume_timer();
-        self.status_line.update_run_header("Applying patch");
         self.add_to_history(history_cell::new_patch_event(
             event.changes,
             &self.config.cwd,
@@ -692,9 +635,10 @@ impl ChatWidget {
     }
 
     fn on_stream_error(&mut self, message: String) {
-        // Show stream errors in the transcript so users see retry/backoff info.
-        self.add_to_history(history_cell::new_stream_error_event(message));
-        self.request_redraw();
+        if self.retry_status_header.is_none() {
+            self.retry_status_header = Some(self.current_status_header.clone());
+        }
+        self.set_status_header(message);
     }
 
     /// Periodic tick to commit at most one queued line to history with a small delay,
@@ -703,6 +647,7 @@ impl ChatWidget {
         if let Some(controller) = self.stream_controller.as_mut() {
             let (cell, is_idle) = controller.on_commit_tick();
             if let Some(cell) = cell {
+                self.bottom_pane.hide_status_indicator();
                 self.add_boxed_history(cell);
             }
             if is_idle {
@@ -735,6 +680,7 @@ impl ChatWidget {
 
     fn handle_stream_finished(&mut self) {
         if self.task_complete_pending {
+            self.bottom_pane.hide_status_indicator();
             self.task_complete_pending = false;
         }
         // A completed stream indicates non-exec content was just inserted.
@@ -748,7 +694,10 @@ impl ChatWidget {
 
         if self.stream_controller.is_none() {
             if self.needs_final_message_separator {
-                let elapsed_seconds = self.status_line.elapsed_seconds();
+                let elapsed_seconds = self
+                    .bottom_pane
+                    .status_widget()
+                    .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
                 self.add_to_history(history_cell::FinalMessageSeparator::new(elapsed_seconds));
                 self.needs_final_message_separator = false;
             }
@@ -805,21 +754,17 @@ impl ChatWidget {
                 self.flush_active_cell();
             }
         }
-        if self.running_commands.is_empty() {
-            self.status_line.update_run_header("Working");
-            self.spawn_git_refresh();
-        }
     }
 
     pub(crate) fn handle_patch_apply_end_now(
         &mut self,
         event: codex_core::protocol::PatchApplyEndEvent,
     ) {
+        // If the patch was successful, just let the "Edited" block stand.
+        // Otherwise, add a failure block.
         if !event.success {
             self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
         }
-        self.status_line.update_run_header("Working");
-        self.spawn_git_refresh();
     }
 
     pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
@@ -833,8 +778,6 @@ impl ChatWidget {
             command: ev.command,
             reason: ev.reason,
         };
-        self.status_line
-            .update_run_header(&Self::approval_status_label("command"));
         self.bottom_pane.push_approval_request(request);
         self.request_redraw();
     }
@@ -852,8 +795,6 @@ impl ChatWidget {
             changes: ev.changes.clone(),
             cwd: self.config.cwd.clone(),
         };
-        self.status_line
-            .update_run_header(&Self::approval_status_label("patch"));
         self.bottom_pane.push_approval_request(request);
         self.request_redraw();
         self.notify(Notification::EditApprovalRequested {
@@ -863,9 +804,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_exec_begin_now(&mut self, ev: ExecCommandBeginEvent) {
-        self.status_line.resume_timer();
-        self.status_line
-            .update_run_header(&Self::exec_status_label(&ev.command));
+        // Ensure the status indicator is visible while the command runs.
         self.running_commands.insert(
             ev.call_id.clone(),
             RunningCommand {
@@ -899,10 +838,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
-        self.status_line.resume_timer();
         self.flush_active_cell();
-        self.status_line
-            .update_run_header(&Self::tool_status_label(&ev.invocation));
         self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
             ev.call_id,
             ev.invocation,
@@ -938,28 +874,25 @@ impl ChatWidget {
         if let Some(extra) = extra_cell {
             self.add_boxed_history(extra);
         }
-        self.status_line.update_run_header("Working");
     }
 
-    fn layout_areas(&self, area: Rect) -> [Rect; 4] {
-        let status_height = if area.height > 0 { 1 } else { 0 };
-        let available = area.height.saturating_sub(status_height);
-        let bottom_min = self.bottom_pane.desired_height(area.width).min(available);
-        let remaining = available.saturating_sub(bottom_min);
+    fn layout_areas(&self, area: Rect) -> [Rect; 3] {
+        let bottom_min = self.bottom_pane.desired_height(area.width).min(area.height);
+        let remaining = area.height.saturating_sub(bottom_min);
 
         let active_desired = self
             .active_cell
             .as_ref()
             .map_or(0, |c| c.desired_height(area.width) + 1);
         let active_height = active_desired.min(remaining);
+        // Note: no header area; remaining is not used beyond computing active height.
 
         let header_height = 0u16;
 
         Layout::vertical([
             Constraint::Length(header_height),
             Constraint::Length(active_height),
-            Constraint::Length(bottom_min),
-            Constraint::Length(status_height),
+            Constraint::Min(bottom_min),
         ])
         .areas(area)
     }
@@ -981,24 +914,18 @@ impl ChatWidget {
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
 
-        let frame_requester_clone = frame_requester.clone();
-        let app_event_tx_clone = app_event_tx.clone();
-        let status_line = StatusLineState::new(&config, frame_requester_clone.clone());
-        let bottom_pane = BottomPane::new(BottomPaneParams {
-            frame_requester,
-            app_event_tx,
-            has_input_focus: true,
-            enhanced_keys_supported,
-            placeholder_text: placeholder,
-            disable_paste_burst: config.disable_paste_burst,
-        });
-
-        let mut widget = Self {
-            app_event_tx: app_event_tx_clone,
-            frame_requester: frame_requester_clone,
+        Self {
+            app_event_tx: app_event_tx.clone(),
+            frame_requester: frame_requester.clone(),
             codex_op_tx,
-            bottom_pane,
-            status_line,
+            bottom_pane: BottomPane::new(BottomPaneParams {
+                frame_requester,
+                app_event_tx,
+                has_input_focus: true,
+                enhanced_keys_supported,
+                placeholder_text: placeholder,
+                disable_paste_burst: config.disable_paste_burst,
+            }),
             active_cell: None,
             config: config.clone(),
             auth_manager,
@@ -1016,6 +943,8 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            current_status_header: String::from("Working"),
+            retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: true,
@@ -1026,10 +955,7 @@ impl ChatWidget {
             ghost_snapshots_disabled: true,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
-        };
-
-        widget.bootstrap_status_line();
-        widget
+        }
     }
 
     /// Create a ChatWidget attached to an existing conversation (e.g., a fork).
@@ -1053,24 +979,18 @@ impl ChatWidget {
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
 
-        let frame_requester_clone = frame_requester.clone();
-        let app_event_tx_clone = app_event_tx.clone();
-        let status_line = StatusLineState::new(&config, frame_requester_clone.clone());
-        let bottom_pane = BottomPane::new(BottomPaneParams {
-            frame_requester,
-            app_event_tx,
-            has_input_focus: true,
-            enhanced_keys_supported,
-            placeholder_text: placeholder,
-            disable_paste_burst: config.disable_paste_burst,
-        });
-
-        let mut widget = Self {
-            app_event_tx: app_event_tx_clone,
-            frame_requester: frame_requester_clone,
+        Self {
+            app_event_tx: app_event_tx.clone(),
+            frame_requester: frame_requester.clone(),
             codex_op_tx,
-            bottom_pane,
-            status_line,
+            bottom_pane: BottomPane::new(BottomPaneParams {
+                frame_requester,
+                app_event_tx,
+                has_input_focus: true,
+                enhanced_keys_supported,
+                placeholder_text: placeholder,
+                disable_paste_burst: config.disable_paste_burst,
+            }),
             active_cell: None,
             config: config.clone(),
             auth_manager,
@@ -1088,20 +1008,19 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            current_status_header: String::from("Working"),
+            retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: true,
-            suppress_session_configured_redraw: false,
+            suppress_session_configured_redraw: true,
             pending_notification: None,
             is_review_mode: false,
             ghost_snapshots: Vec::new(),
             ghost_snapshots_disabled: true,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
-        };
-
-        widget.bootstrap_status_line();
-        widget
+        }
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -1110,39 +1029,25 @@ impl ChatWidget {
                 .active_cell
                 .as_ref()
                 .map_or(0, |c| c.desired_height(width) + 1)
-            + 1
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event {
             KeyEvent {
-                code: KeyCode::Esc,
-                modifiers: KeyModifiers::NONE,
+                code: KeyCode::Char(c),
+                modifiers,
                 kind: KeyEventKind::Press,
                 ..
-            } => {
-                if self.bottom_pane.is_task_running() {
-                    self.bottom_pane.show_ctrl_c_quit_hint();
-                    self.submit_op(Op::Interrupt);
-                } else {
-                    self.bottom_pane.clear_ctrl_c_quit_hint();
-                }
-            }
-            KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: crossterm::event::KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                ..
-            } => {
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c') => {
                 self.on_ctrl_c();
                 return;
             }
             KeyEvent {
-                code: KeyCode::Char('v'),
-                modifiers: KeyModifiers::CONTROL,
+                code: KeyCode::Char(c),
+                modifiers,
                 kind: KeyEventKind::Press,
                 ..
-            } => {
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'v') => {
                 if let Ok((path, info)) = paste_image_to_temp_png() {
                     self.attach_image(path, info.width, info.height, info.encoded_format.label());
                 }
@@ -1672,37 +1577,13 @@ impl ChatWidget {
     }
 
     /// Rebuild and update the queued user messages from the current queue.
-    fn exec_status_label(command: &[String]) -> String {
-        if command.is_empty() {
-            return "Running command".to_string();
-        }
-        let joined = command.join(" ");
-        let summary = truncate_text(&joined, 40);
-        format!("Running {summary}")
-    }
-
-    fn tool_status_label(invocation: &McpInvocation) -> String {
-        let label = if invocation.server.is_empty() {
-            invocation.tool.clone()
-        } else {
-            format!("{}::{}", invocation.server, invocation.tool)
-        };
-        let summary = truncate_text(&label, 36);
-        format!("Calling {summary}")
-    }
-
-    fn approval_status_label(subject: &str) -> String {
-        format!("Awaiting {subject} approval")
-    }
-
     fn refresh_queued_user_messages(&mut self) {
         let messages: Vec<String> = self
             .queued_user_messages
             .iter()
             .map(|m| m.text.clone())
             .collect();
-        self.status_line.set_queued_messages(messages);
-        self.request_redraw();
+        self.bottom_pane.set_queued_user_messages(messages);
     }
 
     pub(crate) fn add_diff_in_progress(&mut self) {
@@ -1716,8 +1597,7 @@ impl ChatWidget {
     pub(crate) fn add_status_output(&mut self) {
         let default_usage = TokenUsage::default();
         let (total_usage, context_usage) = if let Some(ti) = &self.token_info {
-            let usage = &ti.total_token_usage;
-            (usage, Some(usage))
+            (&ti.total_token_usage, Some(&ti.last_token_usage))
         } else {
             (&default_usage, Some(&default_usage))
         };
@@ -1962,14 +1842,12 @@ impl ChatWidget {
     /// Set the reasoning effort in the widget's config copy.
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.config.model_reasoning_effort = effort;
-        self.sync_status_line_model();
     }
 
     /// Set the model in the widget's config copy.
     pub(crate) fn set_model(&mut self, model: &str) {
         self.session_header.set_model(model);
         self.config.model = model.to_string();
-        self.sync_status_line_model();
     }
 
     pub(crate) fn add_info_message(&mut self, message: String, hint: Option<String>) {
@@ -2015,7 +1893,7 @@ impl ChatWidget {
     }
 
     /// True when the UI is in the regular composer state with no running task,
-    /// no modal overlay (e.g. approvals), and no composer popups.
+    /// no modal overlay (e.g. approvals or status indicator), and no composer popups.
     /// In this state Esc-Esc backtracking is enabled.
     pub(crate) fn is_normal_backtrack_mode(&self) -> bool {
         self.bottom_pane.is_normal_backtrack_mode()
@@ -2047,7 +1925,11 @@ impl ChatWidget {
     }
 
     fn on_list_mcp_tools(&mut self, ev: McpListToolsResponseEvent) {
-        self.add_to_history(history_cell::new_mcp_tools_output(&self.config, ev.tools));
+        self.add_to_history(history_cell::new_mcp_tools_output(
+            &self.config,
+            ev.tools,
+            &ev.auth_statuses,
+        ));
     }
 
     fn on_list_custom_prompts(&mut self, ev: ListCustomPromptsResponseEvent) {
@@ -2247,18 +2129,17 @@ impl ChatWidget {
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_info = None;
-        self.status_line.update_tokens(None);
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        let [_, _, bottom_pane_area, _] = self.layout_areas(area);
+        let [_, _, bottom_pane_area] = self.layout_areas(area);
         self.bottom_pane.cursor_pos(bottom_pane_area)
     }
 }
 
 impl WidgetRef for &ChatWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let [_, active_cell_area, bottom_pane_area, status_area] = self.layout_areas(area);
+        let [_, active_cell_area, bottom_pane_area] = self.layout_areas(area);
         (&self.bottom_pane).render(bottom_pane_area, buf);
         if !active_cell_area.is_empty()
             && let Some(cell) = &self.active_cell
@@ -2272,150 +2153,8 @@ impl WidgetRef for &ChatWidget {
                 tool.render_ref(area, buf);
             }
         }
-        if !status_area.is_empty() {
-            if self.bottom_pane.has_active_view() {
-                Paragraph::new("").render(status_area, buf);
-            } else {
-                let line = self.status_line.render_line(status_area.width);
-                Paragraph::new(line).render(status_area, buf);
-            }
-        }
         self.last_rendered_width.set(Some(area.width as usize));
     }
-}
-
-async fn collect_status_line_git_snapshot(cwd: PathBuf) -> Option<StatusLineGitSnapshot> {
-    let info = collect_git_info(&cwd).await?;
-    let (dirty, ahead, behind) = git_status_porcelain(&cwd)
-        .await
-        .unwrap_or((false, None, None));
-    Some(StatusLineGitSnapshot {
-        branch: info.branch,
-        dirty,
-        ahead,
-        behind,
-    })
-}
-
-async fn git_status_porcelain(cwd: &Path) -> Option<(bool, Option<u32>, Option<u32>)> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain=2", "--branch"])
-        .current_dir(cwd)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut dirty = false;
-    let mut ahead = None;
-    let mut behind = None;
-    for line in text.lines() {
-        if !line.starts_with('#') {
-            dirty = true;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("# branch.ab ") {
-            let mut parts = rest.split_whitespace();
-            if let Some(ahead_part) = parts.next() {
-                ahead = ahead_part.strip_prefix('+').and_then(|s| s.parse().ok());
-            }
-            if let Some(behind_part) = parts.next() {
-                behind = behind_part.strip_prefix('-').and_then(|s| s.parse().ok());
-            }
-        }
-    }
-    Some((dirty, ahead, behind))
-}
-
-async fn detect_kube_context_async() -> Option<String> {
-    spawn_blocking(detect_kube_context_sync)
-        .await
-        .ok()
-        .flatten()
-}
-
-fn detect_kube_context_sync() -> Option<String> {
-    for path in kube_config_paths() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('#') {
-                    continue;
-                }
-                if let Some(value) = trimmed.strip_prefix("current-context:") {
-                    let context = value.trim();
-                    if !context.is_empty() {
-                        return Some(trim_kube_context(context));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn kube_config_paths() -> Vec<PathBuf> {
-    if let Some(paths) = env::var_os("KUBECONFIG") {
-        env::split_paths(&paths).collect()
-    } else if let Some(home) = env::var_os("HOME") {
-        vec![PathBuf::from(home).join(".kube/config")]
-    } else {
-        Vec::new()
-    }
-}
-
-fn trim_kube_context(context: &str) -> String {
-    context.rsplit('/').next().unwrap_or(context).to_string()
-}
-
-#[cfg(test)]
-lazy_static! {
-    static ref DEVSPACE_OVERRIDE: Mutex<Option<Option<String>>> = Mutex::new(None);
-}
-
-#[cfg(test)]
-pub(crate) fn set_devspace_override_for_tests(value: Option<String>) {
-    *DEVSPACE_OVERRIDE.lock().unwrap() = Some(value);
-}
-
-#[cfg(test)]
-pub(crate) fn clear_devspace_override_for_tests() {
-    *DEVSPACE_OVERRIDE.lock().unwrap() = None;
-}
-
-fn detect_devspace() -> Option<String> {
-    #[cfg(test)]
-    if let Some(override_value) = DEVSPACE_OVERRIDE.lock().unwrap().clone() {
-        return override_value;
-    }
-
-    env::var("TMUX_DEVSPACE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-}
-
-fn detect_aws_profile() -> Option<String> {
-    env::var("AWS_PROFILE")
-        .or_else(|_| env::var("AWS_VAULT"))
-        .ok()
-        .map(|profile| {
-            profile
-                .trim()
-                .trim_start_matches("export AWS_PROFILE=")
-                .to_string()
-        })
-        .filter(|s| !s.is_empty())
-}
-
-fn detect_hostname() -> Option<String> {
-    if let Ok(host) = env::var("HOSTNAME")
-        && !host.trim().is_empty()
-    {
-        return Some(host);
-    }
-    get_hostname().ok().and_then(|os| os.into_string().ok())
 }
 
 enum Notification {

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use predicates::str::contains;
 use pretty_assertions::assert_eq;
 use serde_json::Value as JsonValue;
 use serde_json::json;
@@ -9,7 +10,6 @@ use tempfile::TempDir;
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::cargo_bin("codex")?;
     cmd.env("CODEX_HOME", codex_home);
-    cmd.env("CODEX_STATE_HOME", codex_home.join("state"));
     Ok(cmd)
 }
 
@@ -50,7 +50,6 @@ fn list_and_get_render_expected_output() -> Result<()> {
     assert!(list_output.status.success());
     let stdout = String::from_utf8(list_output.stdout)?;
     assert!(stdout.contains("Name"));
-    assert!(stdout.contains("Enabled"));
     assert!(stdout.contains("docs"));
     assert!(stdout.contains("docs-server"));
     assert!(stdout.contains("TOKEN=secret"));
@@ -65,7 +64,6 @@ fn list_and_get_render_expected_output() -> Result<()> {
         json!([
           {
             "name": "docs",
-            "enabled": false,
             "transport": {
               "type": "stdio",
               "command": "docs-server",
@@ -96,29 +94,11 @@ fn list_and_get_render_expected_output() -> Result<()> {
     assert!(stdout.contains("remove: codex mcp remove docs"));
 
     let mut get_json_cmd = codex_command(codex_home.path())?;
-    let get_json_output = get_json_cmd
+    get_json_cmd
         .args(["mcp", "get", "docs", "--json"])
-        .output()?;
-    assert!(get_json_output.status.success());
-    let stdout = String::from_utf8(get_json_output.stdout)?;
-    let parsed: JsonValue = serde_json::from_str(&stdout)?;
-    assert_eq!(
-        parsed,
-        json!({
-            "name": "docs",
-            "enabled": false,
-            "transport": {
-                "type": "stdio",
-                "command": "docs-server",
-                "args": ["--port", "4000"],
-                "env": {
-                    "TOKEN": "secret"
-                }
-            },
-            "startup_timeout_sec": null,
-            "tool_timeout_sec": null
-        })
-    );
+        .assert()
+        .success()
+        .stdout(contains("\"name\": \"docs\""));
 
     Ok(())
 }

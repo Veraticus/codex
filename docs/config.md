@@ -421,25 +421,12 @@ codex mcp get docs --json
 # Remove a server
 codex mcp remove docs
 
-# Enable or disable a server without editing config.toml
-codex mcp enable docs
-codex mcp disable docs
-
 # Log in to a streamable HTTP server that supports oauth
 codex mcp login SERVER_NAME
 
 # Log out from a streamable HTTP server that supports oauth
 codex mcp logout SERVER_NAME
 ```
-
-#### Enabling and disabling MCP servers
-
-Codex discovers all MCP definitions from `config.toml`, but they remain _disabled_ until you explicitly turn them on. Enabled state is stored in a writable registry (default `~/.local/state/codex/mcp_registry.json`; override with `CODEX_STATE_HOME`). This avoids churn to Nix- or Git-managed config files while still letting you opt into servers when you are ready.
-
-- **CLI** – run `codex mcp enable <name>` to activate a server, or `codex mcp disable <name>` to deactivate it. `codex mcp list` and `codex mcp get` now show an `enabled` flag so you can audit the current state.
-- **TUI** – inside an active session, use `/enable <name>` or `/disable <name>` (and `/mcp` to review the current status). Disabled servers are rendered in the MCP panel with a red “disabled” badge so you can tell at a glance what is ready.
-
-Once a server is enabled, Codex starts it automatically for new sessions (`/new`) and surfaces its tools in the prompt.
 
 ## Examples of useful MCPs
 

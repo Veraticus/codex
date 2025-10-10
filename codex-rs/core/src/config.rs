@@ -18,7 +18,6 @@ use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::git_info::resolve_root_git_project_for_trust;
-use crate::mcp_registry::McpRegistry;
 use crate::model_family::ModelFamily;
 use crate::model_family::derive_default_model_family;
 use crate::model_family::find_family_for_model;
@@ -145,9 +144,6 @@ pub struct Config {
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     pub mcp_servers: HashMap<String, McpServerConfig>,
-
-    /// Full set of MCP servers discovered in configuration, regardless of enablement state.
-    pub available_mcp_servers: HashMap<String, McpServerConfig>,
 
     /// Preferred store for MCP OAuth credentials.
     /// keyring: Use an OS-specific keyring service.
@@ -1050,21 +1046,6 @@ impl Config {
 
         let history = cfg.history.unwrap_or_default();
 
-        let mcp_registry = match McpRegistry::load(&codex_home) {
-            Ok(registry) => registry,
-            Err(err) => {
-                tracing::warn!("Failed to load MCP registry: {err}");
-                McpRegistry::default()
-            }
-        };
-        let available_mcp_servers = cfg.mcp_servers.clone();
-        let mut enabled_mcp_servers = HashMap::new();
-        for (name, server) in cfg.mcp_servers.iter() {
-            if mcp_registry.is_enabled(name) {
-                enabled_mcp_servers.insert(name.clone(), server.clone());
-            }
-        }
-
         let tools_web_search_request = override_tools_web_search_request
             .or(cfg.tools.as_ref().and_then(|t| t.web_search))
             .unwrap_or(false);
@@ -1138,8 +1119,7 @@ impl Config {
             notify: cfg.notify,
             user_instructions,
             base_instructions,
-            mcp_servers: enabled_mcp_servers,
-            available_mcp_servers,
+            mcp_servers: cfg.mcp_servers,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             mcp_oauth_credentials_store_mode: cfg.mcp_oauth_credentials_store.unwrap_or_default(),
@@ -2075,7 +2055,6 @@ model_verbosity = "high"
                 notify: None,
                 cwd: fixture.cwd(),
                 mcp_servers: HashMap::new(),
-                available_mcp_servers: HashMap::new(),
                 mcp_oauth_credentials_store_mode: Default::default(),
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
@@ -2139,7 +2118,6 @@ model_verbosity = "high"
             notify: None,
             cwd: fixture.cwd(),
             mcp_servers: HashMap::new(),
-            available_mcp_servers: HashMap::new(),
             mcp_oauth_credentials_store_mode: Default::default(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
@@ -2218,7 +2196,6 @@ model_verbosity = "high"
             notify: None,
             cwd: fixture.cwd(),
             mcp_servers: HashMap::new(),
-            available_mcp_servers: HashMap::new(),
             mcp_oauth_credentials_store_mode: Default::default(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
@@ -2283,7 +2260,6 @@ model_verbosity = "high"
             notify: None,
             cwd: fixture.cwd(),
             mcp_servers: HashMap::new(),
-            available_mcp_servers: HashMap::new(),
             mcp_oauth_credentials_store_mode: Default::default(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,

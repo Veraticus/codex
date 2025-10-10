@@ -33,7 +33,6 @@ mod flags;
 pub mod git_info;
 pub mod landlock;
 mod mcp_connection_manager;
-pub mod mcp_registry;
 mod mcp_tool_call;
 mod message_history;
 mod model_provider_info;

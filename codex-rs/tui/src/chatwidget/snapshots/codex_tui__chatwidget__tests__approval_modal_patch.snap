@@ -6,8 +6,8 @@ expression: terminal.backend().vt100().screen().contents()
 
   README.md (+2 -0)
 
-        1     +hello
-        2     +world
+      1     +hello
+      2     +world
 
   The model wants to apply changes
 

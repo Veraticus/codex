@@ -87,8 +87,7 @@ impl OtelEventManager {
         auto_compact_token_limit: Option<i64>,
         approval_policy: AskForApproval,
         sandbox_policy: SandboxPolicy,
-        enabled_mcp_servers: Vec<&str>,
-        available_mcp_servers: Vec<&str>,
+        mcp_servers: Vec<&str>,
         active_profile: Option<String>,
     ) {
         tracing::event!(
@@ -110,8 +109,7 @@ impl OtelEventManager {
             auto_compact_token_limit = auto_compact_token_limit,
             approval_policy = %approval_policy,
             sandbox_policy = %sandbox_policy,
-            enabled_mcp_servers = enabled_mcp_servers.join(", "),
-            available_mcp_servers = available_mcp_servers.join(", "),
+            mcp_servers = mcp_servers.join(", "),
             active_profile = active_profile,
         )
     }

@@ -13,10 +13,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::exec_command::relativize_to_home;
+use crate::render::renderable::{ColumnRenderable, InsetRenderable, Renderable};
 use crate::render::Insets;
-use crate::render::renderable::ColumnRenderable;
-use crate::render::renderable::InsetRenderable;
-use crate::render::renderable::Renderable;
 use codex_core::git_info::get_git_repo_root;
 use codex_core::protocol::FileChange;
 

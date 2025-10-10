@@ -417,14 +417,6 @@ impl Session {
             terminal::user_agent(),
         );
 
-        let enabled_mcp_servers: Vec<&str> =
-            config.mcp_servers.keys().map(String::as_str).collect();
-        let available_mcp_servers: Vec<&str> = config
-            .available_mcp_servers
-            .keys()
-            .map(String::as_str)
-            .collect();
-
         otel_event_manager.conversation_starts(
             config.model_provider.name.as_str(),
             config.model_reasoning_effort,
@@ -434,8 +426,7 @@ impl Session {
             config.model_auto_compact_token_limit,
             config.approval_policy,
             config.sandbox_policy.clone(),
-            enabled_mcp_servers,
-            available_mcp_servers,
+            config.mcp_servers.keys().map(String::as_str).collect(),
             config.active_profile.clone(),
         );
 

@@ -149,7 +149,6 @@ impl<'a> RtOptions<'a> {
     }
 }
 
-#[must_use]
 pub(crate) fn word_wrap_line<'a, O>(line: &'a Line<'a>, width_or_options: O) -> Vec<Line<'a>>
 where
     O: Into<RtOptions<'a>>,

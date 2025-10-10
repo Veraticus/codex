@@ -282,16 +282,14 @@ impl RunTimer {
 
     fn snapshot(&self, now: Instant) -> RunTimerSnapshot {
         let mut elapsed = self.elapsed_running;
-        let mut last_resume_at = self.last_resume_at;
-        if !self.is_paused {
-            if let Some(last) = self.last_resume_at {
-                elapsed = elapsed.saturating_add(now.saturating_duration_since(last));
-            }
-            last_resume_at = Some(now);
+        if !self.is_paused
+            && let Some(last) = self.last_resume_at
+        {
+            elapsed += now.saturating_duration_since(last);
         }
         RunTimerSnapshot {
             elapsed_running: elapsed,
-            last_resume_at,
+            last_resume_at: self.last_resume_at,
             is_paused: self.is_paused,
         }
     }

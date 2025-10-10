@@ -57,13 +57,11 @@ const MODEL_ICONS: &[char] = &['󰚩', '󱚝', '󱚟', '󱚡', '󱚣', '󱚥'];
 const DEVSPACE_ICONS: &[&str] = &["󰠖 ", "󰠶 ", "󰋩 ", "󰚌 "];
 const CONTEXT_PADDING: usize = 4;
 const DEFAULT_STATUS_MESSAGE: &str = "Waiting for input";
-pub(super) const STATUS_CAPSULE_WIDTH: usize = 42;
+pub(super) const STATUS_CAPSULE_WIDTH: usize = 32;
 pub(super) const STATUS_CAPSULE_SPINNER_WIDTH: usize = 1;
 pub(super) const STATUS_CAPSULE_GAP_WIDTH: usize = 1;
 pub(super) const STATUS_CAPSULE_TEXT_WIDTH: usize =
     STATUS_CAPSULE_WIDTH - STATUS_CAPSULE_SPINNER_WIDTH - STATUS_CAPSULE_GAP_WIDTH;
-const STATUS_TIMER_TEXT_WIDTH: usize = 16;
-const QUEUE_PREVIEW_ENABLED: bool = false;
 pub(super) const MARQUEE_STEP_MS: u64 = 450;
 
 fn span<S>(text: S, style: Style) -> Span<'static>
@@ -233,11 +231,6 @@ pub(crate) fn format_elapsed_compact(elapsed_secs: u64) -> String {
     format!("{hours}h {minutes:02}m {seconds:02}s")
 }
 
-fn format_timer_segment(elapsed_secs: u64) -> String {
-    let raw = format!("󰔟 {}", format_elapsed_compact(elapsed_secs));
-    slice_text_segment(raw.as_str(), 0, STATUS_TIMER_TEXT_WIDTH)
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum PathVariant {
     Full,
@@ -364,7 +357,7 @@ impl<'a> RenderModel<'a> {
             token_variant: TokenVariant::Hidden,
             context_variant: ContextVariant::Bar,
             git_variant: GitVariant::BranchWithStatus,
-            include_queue_preview: QUEUE_PREVIEW_ENABLED,
+            include_queue_preview: true,
             show_interrupt_hint: show_hint,
             show_run_timer: has_timer,
             show_run_label: run_state.is_some(),
@@ -690,10 +683,13 @@ impl<'a> RenderModel<'a> {
         if self.show_run_timer {
             if let Some(timer) = state.timer.as_ref() {
                 let elapsed = timer.elapsed_at(self.now).as_secs();
-                let text = format_timer_segment(elapsed);
+                let text = format!("󰔟 {}", format_elapsed_compact(elapsed));
                 segments.push(PowerlineSegment::text(PEACH, text));
             } else {
-                segments.push(PowerlineSegment::text(MAUVE, format_timer_segment(0)));
+                segments.push(PowerlineSegment::text(
+                    MAUVE,
+                    format!("󰔟 {}", format_elapsed_compact(0)),
+                ));
             }
         }
 

@@ -120,8 +120,6 @@ where
     /// Last known position of the cursor. Used to find the new area when the viewport is inlined
     /// and the terminal resized.
     pub last_known_cursor_pos: Position,
-
-    use_custom_flush: bool,
 }
 
 impl<B> Drop for Terminal<B>
@@ -160,7 +158,6 @@ where
             viewport_area: Rect::new(0, cursor_pos.y, 0, 0),
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
-            use_custom_flush: true,
         })
     }
 
@@ -193,24 +190,15 @@ where
     pub fn flush(&mut self) -> io::Result<()> {
         let previous_buffer = &self.buffers[1 - self.current];
         let current_buffer = &self.buffers[self.current];
-
-        if self.use_custom_flush {
-            let updates = diff_buffers(previous_buffer, current_buffer);
-            if let Some(DrawCommand::Put { x, y, .. }) = updates
-                .iter()
-                .rev()
-                .find(|cmd| matches!(cmd, DrawCommand::Put { .. }))
-            {
-                self.last_known_cursor_pos = Position { x: *x, y: *y };
-            }
-            draw(&mut self.backend, updates.into_iter())
-        } else {
-            let updates = previous_buffer.diff(current_buffer);
-            if let Some((x, y, _)) = updates.last() {
-                self.last_known_cursor_pos = Position { x: *x, y: *y };
-            }
-            self.backend.draw(updates.into_iter())
+        let updates = diff_buffers(previous_buffer, current_buffer);
+        if let Some(DrawCommand::Put { x, y, .. }) = updates
+            .iter()
+            .rev()
+            .find(|cmd| matches!(cmd, DrawCommand::Put { .. }))
+        {
+            self.last_known_cursor_pos = Position { x: *x, y: *y };
         }
+        draw(&mut self.backend, updates.into_iter())
     }
 
     /// Updates the Terminal so that internal buffers match the requested area.
@@ -420,13 +408,12 @@ fn diff_buffers<'a>(a: &'a Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
 
         let x = row
             .iter()
-            .rposition(|cell| {
-                cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty()
-            })
+            .rposition(|cell| cell.symbol() != " " || cell.bg != bg)
             .unwrap_or(0);
         last_nonblank_column[y as usize] = x as u16;
-        if x < (a.area.width as usize).saturating_sub(1) {
-            let (x_abs, y_abs) = a.pos_of(row_start + x + 1);
+        let clear_start = row_start + x + 1;
+        if x < (a.area.width as usize).saturating_sub(1) && clear_start < previous_buffer.len() {
+            let (x_abs, y_abs) = a.pos_of(clear_start);
             updates.push(DrawCommand::ClearToEnd {
                 x: x_abs,
                 y: y_abs,

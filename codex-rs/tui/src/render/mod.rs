@@ -4,12 +4,11 @@ pub mod highlight;
 pub mod line_utils;
 pub mod renderable;
 
-#[derive(Clone, Copy, Debug, Default)]
 pub struct Insets {
-    left: u16,
-    top: u16,
-    right: u16,
-    bottom: u16,
+    pub left: u16,
+    pub top: u16,
+    pub right: u16,
+    pub bottom: u16,
 }
 
 impl Insets {
@@ -38,13 +37,11 @@ pub trait RectExt {
 
 impl RectExt for Rect {
     fn inset(&self, insets: Insets) -> Rect {
-        let horizontal = insets.left.saturating_add(insets.right);
-        let vertical = insets.top.saturating_add(insets.bottom);
         Rect {
-            x: self.x.saturating_add(insets.left),
-            y: self.y.saturating_add(insets.top),
-            width: self.width.saturating_sub(horizontal),
-            height: self.height.saturating_sub(vertical),
+            x: self.x + insets.left,
+            y: self.y + insets.top,
+            width: self.width - insets.left - insets.right,
+            height: self.height - insets.top - insets.bottom,
         }
     }
 }

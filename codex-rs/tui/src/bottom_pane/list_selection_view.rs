@@ -20,6 +20,7 @@ use crate::render::RectExt as _;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
+use crate::terminal_palette;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -87,7 +88,7 @@ impl ListSelectionView {
         if params.title.is_some() || params.subtitle.is_some() {
             let title = params.title.map(|title| Line::from(title.bold()));
             let subtitle = params.subtitle.map(|subtitle| Line::from(subtitle.dim()));
-            header = Box::new(ColumnRenderable::with([
+            header = Box::new(ColumnRenderable::new([
                 header,
                 Box::new(title),
                 Box::new(subtitle),
@@ -349,7 +350,7 @@ impl Renderable for ListSelectionView {
         .areas(area);
 
         Block::default()
-            .style(user_message_style())
+            .style(user_message_style(terminal_palette::default_bg()))
             .render(content_area, buf);
 
         let header_height = self

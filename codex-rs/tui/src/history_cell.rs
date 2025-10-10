@@ -838,7 +838,7 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
         Line::from(vec![
             "    See the ".into(),
             "\u{1b}]8;;https://github.com/openai/codex/blob/main/docs/config.md#mcp_servers\u{7}MCP docs\u{1b}]8;;\u{7}".underlined(),
-            " to configure them.".into(),
+            " to configure them, then enable servers with /enable <name>.".into(),
         ])
         .style(Style::default().add_modifier(Modifier::DIM)),
     ];
@@ -858,13 +858,23 @@ pub(crate) fn new_mcp_tools_output(
         "".into(),
     ];
 
-    if tools.is_empty() {
-        lines.push("  • No MCP tools available.".italic().into());
+    if config.available_mcp_servers.is_empty() {
+        lines.push("  • No MCP servers configured.".italic().into());
         lines.push("".into());
         return PlainHistoryCell { lines };
     }
 
-    for (server, cfg) in config.mcp_servers.iter() {
+    if config.mcp_servers.is_empty() {
+        lines.push(
+            "  • All configured MCP servers are disabled. Use /enable <name> to activate one."
+                .italic()
+                .into(),
+        );
+        lines.push("".into());
+    }
+
+    for (server, cfg) in config.available_mcp_servers.iter() {
+        let enabled = config.mcp_servers.contains_key(server);
         let prefix = format!("{server}__");
         let mut names: Vec<String> = tools
             .keys()
@@ -875,6 +885,13 @@ pub(crate) fn new_mcp_tools_output(
 
         lines.push(vec!["  • Server: ".into(), server.clone().into()].into());
 
+        let status_span = if enabled {
+            "enabled".green()
+        } else {
+            "disabled".red()
+        };
+        lines.push(vec!["    • Status: ".into(), status_span].into());
+
         match &cfg.transport {
             McpServerTransportConfig::Stdio { command, args, env } => {
                 let args_suffix = if args.is_empty() {
@@ -883,7 +900,12 @@ pub(crate) fn new_mcp_tools_output(
                     format!(" {}", args.join(" "))
                 };
                 let cmd_display = format!("{command}{args_suffix}");
-                lines.push(vec!["    • Command: ".into(), cmd_display.into()].into());
+                let cmd_span = if enabled {
+                    cmd_display.into()
+                } else {
+                    cmd_display.dim()
+                };
+                lines.push(vec!["    • Command: ".into(), cmd_span].into());
 
                 if let Some(env) = env.as_ref()
                     && !env.is_empty()
@@ -891,18 +913,37 @@ pub(crate) fn new_mcp_tools_output(
                     let mut env_pairs: Vec<String> =
                         env.iter().map(|(k, v)| format!("{k}={v}")).collect();
                     env_pairs.sort();
-                    lines.push(vec!["    • Env: ".into(), env_pairs.join(" ").into()].into());
+                    let env_span = if enabled {
+                        env_pairs.join(" ").into()
+                    } else {
+                        env_pairs.join(" ").dim()
+                    };
+                    lines.push(vec!["    • Env: ".into(), env_span].into());
                 }
             }
             McpServerTransportConfig::StreamableHttp { url, .. } => {
-                lines.push(vec!["    • URL: ".into(), url.clone().into()].into());
+                let url_span = if enabled {
+                    url.clone().into()
+                } else {
+                    url.clone().dim()
+                };
+                lines.push(vec!["    • URL: ".into(), url_span].into());
             }
         }
 
-        if names.is_empty() {
-            lines.push("    • Tools: (none)".into());
+        if enabled {
+            if names.is_empty() {
+                lines.push("    • Tools: (none)".dim().italic().into());
+            } else {
+                lines.push(vec!["    • Tools: ".into(), names.join(", ").into()].into());
+            }
         } else {
-            lines.push(vec!["    • Tools: ".into(), names.join(", ").into()].into());
+            lines.push(
+                "    • Tools: enable this server to load tool definitions."
+                    .dim()
+                    .italic()
+                    .into(),
+            );
         }
         lines.push(Line::from(""));
     }

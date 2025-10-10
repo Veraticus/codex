@@ -117,6 +117,7 @@ use codex_common::model_presets::ModelPreset;
 use codex_common::model_presets::builtin_model_presets;
 use codex_core::AuthManager;
 use codex_core::ConversationManager;
+use codex_core::mcp_registry::McpRegistry;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
@@ -1184,7 +1185,10 @@ impl ChatWidget {
                         }
                     }
                     InputResult::Command(cmd) => {
-                        self.dispatch_command(cmd);
+                        self.dispatch_command(cmd, None);
+                    }
+                    InputResult::CommandWithArgs(cmd, args) => {
+                        self.dispatch_command(cmd, Some(args));
                     }
                     InputResult::None => {}
                 }
@@ -1207,7 +1211,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn dispatch_command(&mut self, cmd: SlashCommand) {
+    fn dispatch_command(&mut self, cmd: SlashCommand, args: Option<String>) {
         if !cmd.available_during_task() && self.bottom_pane.is_task_running() {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
@@ -1276,6 +1280,12 @@ impl ChatWidget {
             SlashCommand::Mcp => {
                 self.add_mcp_output();
             }
+            SlashCommand::Enable => {
+                self.handle_mcp_toggle(args, true);
+            }
+            SlashCommand::Disable => {
+                self.handle_mcp_toggle(args, false);
+            }
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => {
                 use codex_core::protocol::EventMsg;
@@ -1315,6 +1325,85 @@ impl ChatWidget {
                 }));
             }
         }
+    }
+
+    fn handle_mcp_toggle(&mut self, args: Option<String>, enable: bool) {
+        let action = if enable { "enable" } else { "disable" };
+        let Some(raw_args) = args.map(|s| s.trim().to_string()) else {
+            let message = format!("Usage: /{action} <server>");
+            self.add_error_message(message);
+            self.request_redraw();
+            return;
+        };
+
+        let server_name = raw_args.split_whitespace().next().unwrap_or("");
+        if server_name.is_empty() {
+            let message = format!("Usage: /{action} <server>");
+            self.add_error_message(message);
+            self.request_redraw();
+            return;
+        }
+
+        if !self.config.available_mcp_servers.contains_key(server_name) {
+            let message = format!("No MCP server named '{server_name}' found.");
+            self.add_error_message(message);
+            self.request_redraw();
+            return;
+        }
+
+        let mut registry = match McpRegistry::load(&self.config.codex_home) {
+            Ok(registry) => registry,
+            Err(err) => {
+                let message = format!("Failed to load MCP registry: {err}");
+                self.add_error_message(message);
+                self.request_redraw();
+                return;
+            }
+        };
+
+        let changed = registry.set_enabled(server_name, enable);
+
+        if changed
+            && let Err(err) = registry.save(&self.config.codex_home) {
+                let message = format!("Failed to update MCP registry: {err}");
+                self.add_error_message(message);
+                self.request_redraw();
+                return;
+            }
+
+        self.sync_enabled_mcp_servers_from_registry(&registry);
+
+        let mut hint = None;
+        let message = if enable {
+            hint = Some(
+                "Run /mcp to review available tools, then /new to start a session with them."
+                    .to_string(),
+            );
+            if changed {
+                format!("Enabled MCP server '{server_name}'.")
+            } else {
+                format!("MCP server '{server_name}' is already enabled.")
+            }
+        } else if changed {
+            format!("Disabled MCP server '{server_name}'.")
+        } else {
+            format!("MCP server '{server_name}' is already disabled.")
+        };
+
+        self.add_info_message(message, hint);
+        self.request_redraw();
+    }
+
+    fn sync_enabled_mcp_servers_from_registry(&mut self, registry: &McpRegistry) {
+        let mut enabled = HashMap::new();
+        for (name, server) in &self.config.available_mcp_servers {
+            if registry.is_enabled(name) {
+                enabled.insert(name.clone(), server.clone());
+            }
+        }
+        self.config.mcp_servers = enabled;
+        self.app_event_tx
+            .send(AppEvent::UpdateConfig(self.config.clone()));
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
@@ -1983,8 +2072,13 @@ impl ChatWidget {
     }
 
     pub(crate) fn add_mcp_output(&mut self) {
-        if self.config.mcp_servers.is_empty() {
+        if self.config.available_mcp_servers.is_empty() {
             self.add_to_history(history_cell::empty_mcp_output());
+        } else if self.config.mcp_servers.is_empty() {
+            self.add_to_history(history_cell::new_mcp_tools_output(
+                &self.config,
+                HashMap::new(),
+            ));
         } else {
             self.submit_op(Op::ListMcpTools);
         }

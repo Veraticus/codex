@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use codex_common::model_presets::ModelPreset;
+use codex_core::config::Config;
 use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
 use codex_file_search::FileMatch;
@@ -23,6 +24,9 @@ pub(crate) enum AppEvent {
 
     /// Request to exit the application gracefully.
     ExitRequest,
+
+    /// Replace the in-memory config used for future sessions.
+    UpdateConfig(Config),
 
     /// Forward an `Op` to the Agent. Using an `AppEvent` for this avoids
     /// bubbling channels through layers of widgets.

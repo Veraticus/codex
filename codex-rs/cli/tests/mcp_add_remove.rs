@@ -3,14 +3,30 @@ use std::path::Path;
 use anyhow::Result;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config_types::McpServerTransportConfig;
+use codex_core::mcp_registry::McpRegistry;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use tempfile::TempDir;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::cargo_bin("codex")?;
     cmd.env("CODEX_HOME", codex_home);
+    cmd.env("CODEX_STATE_HOME", codex_home.join("state"));
     Ok(cmd)
+}
+
+fn set_state_home<P: AsRef<Path>>(path: P) {
+    // Tests run in a controlled environment; setting env vars requires unsafe on this target.
+    unsafe {
+        std::env::set_var("CODEX_STATE_HOME", path.as_ref());
+    }
+}
+
+fn clear_state_home() {
+    unsafe {
+        std::env::remove_var("CODEX_STATE_HOME");
+    }
 }
 
 #[tokio::test]
@@ -36,6 +52,11 @@ async fn add_and_remove_server_updates_global_config() -> Result<()> {
         other => panic!("unexpected transport: {other:?}"),
     }
 
+    set_state_home(codex_home.path().join("state"));
+    let registry = McpRegistry::load(codex_home.path())?;
+    assert!(!registry.enabled().contains("docs"));
+    clear_state_home();
+
     let mut remove_cmd = codex_command(codex_home.path())?;
     remove_cmd
         .args(["mcp", "remove", "docs"])
@@ -45,6 +66,11 @@ async fn add_and_remove_server_updates_global_config() -> Result<()> {
 
     let servers = load_global_mcp_servers(codex_home.path()).await?;
     assert!(servers.is_empty());
+
+    set_state_home(codex_home.path().join("state"));
+    let registry = McpRegistry::load(codex_home.path())?;
+    assert!(!registry.enabled().contains("docs"));
+    clear_state_home();
 
     let mut remove_again_cmd = codex_command(codex_home.path())?;
     remove_again_cmd
@@ -203,6 +229,57 @@ async fn add_cant_add_command_and_url() -> Result<()> {
 
     let servers = load_global_mcp_servers(codex_home.path()).await?;
     assert!(servers.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn enable_disable_toggles_registry() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    codex_command(codex_home.path())?
+        .args(["mcp", "add", "docs", "--", "printf", "hello"])
+        .assert()
+        .success();
+
+    let mut enable_cmd = codex_command(codex_home.path())?;
+    enable_cmd
+        .args(["mcp", "enable", "docs"])
+        .assert()
+        .success()
+        .stdout(contains("Enabled MCP server 'docs'."));
+
+    set_state_home(codex_home.path().join("state"));
+    let registry = McpRegistry::load(codex_home.path())?;
+    assert!(registry.enabled().contains("docs"));
+
+    let mut list_cmd = codex_command(codex_home.path())?;
+    let list_output = list_cmd.args(["mcp", "list", "--json"]).output()?;
+    assert!(list_output.status.success());
+    let json: Value = serde_json::from_slice(&list_output.stdout)?;
+    let arr = json.as_array().expect("list output should be an array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["enabled"], Value::Bool(true));
+
+    let mut disable_cmd = codex_command(codex_home.path())?;
+    disable_cmd
+        .args(["mcp", "disable", "docs"])
+        .assert()
+        .success()
+        .stdout(contains("Disabled MCP server 'docs'."));
+
+    set_state_home(codex_home.path().join("state"));
+    let registry = McpRegistry::load(codex_home.path())?;
+    assert!(!registry.enabled().contains("docs"));
+    clear_state_home();
+
+    let mut list_cmd = codex_command(codex_home.path())?;
+    let list_output = list_cmd.args(["mcp", "list", "--json"]).output()?;
+    assert!(list_output.status.success());
+    let json: Value = serde_json::from_slice(&list_output.stdout)?;
+    let arr = json.as_array().expect("list output should be an array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["enabled"], Value::Bool(false));
 
     Ok(())
 }
